@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import {VitePWA} from "vite-plugin-pwa";
 
 export default defineConfig({
-  base: '/iranpeaks/',                    // چون روت GitHub Pages هست
+  base: '/',                    // چون روت GitHub Pages هست
   build: { outDir: 'dist' },
   optimizeDeps: { exclude: ['wa-sqlite'] },
   assetsInclude: ['**/*.wasm'],
@@ -17,7 +17,7 @@ export default defineConfig({
         theme_color: '#2563eb',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/iranpeaks/',
+        start_url: '/',
         lang: 'fa',
         dir: 'rtl',
         icons: [
