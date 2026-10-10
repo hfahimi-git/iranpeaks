@@ -1,0 +1,114 @@
+// src/map/map.ts
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { searchPeaks, getPeaksByState } from '../db/queries';
+
+// اصلاح آیکون پیش‌فرض Leaflet (مشکل معروف با Vite)
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+L.Marker.prototype.options.icon = DefaultIcon;
+
+let map: L.Map | null = null;
+let markersLayer: L.LayerGroup | null = null;
+
+export function initMap(containerId: string = 'map'): L.Map {
+  if (map) return map;
+
+  map = L.map(containerId).setView([32.4279, 53.6880], 6); // مرکز ایران
+
+  L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+                attribution: '<a href="https://www.cyclosm.org/">CyclOSM v0.6</a> | Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 18,
+  }).addTo(map);
+
+  markersLayer = L.layerGroup().addTo(map);
+
+  return map;
+}
+
+export async function loadPeaks(query: string) {
+  if (!map || !markersLayer) return;
+
+  markersLayer.clearLayers();
+
+  if (!query || query.trim().length < 2) {
+    return;
+  }
+
+  const peaks = await searchPeaks(query.trim());
+  renderPeaksOnMap(peaks);
+}
+
+export async function loadPeaksByState(state: string) {
+  if (!map || !markersLayer) return;
+
+  markersLayer.clearLayers();
+
+  if (!state || state.trim().length < 2) {
+    return;
+  }
+
+  const peaks = await getPeaksByState(state.trim());
+  renderPeaksOnMap(peaks);
+}
+
+
+function renderPeaksOnMap(peaks: any[]) {
+  if (!map || !markersLayer || peaks.length === 0) return;
+
+  const bounds: L.LatLngExpression[] = [];
+
+  peaks.forEach((peak: any) => {
+    if (!peak.lat || !peak.lng) return;
+
+    const marker = L.marker([peak.lat, peak.lng]);
+
+    const popupContent = `
+      <div style="min-width: 200px; font-family: Vazirmatn, sans-serif; direction: rtl; text-align: right;">
+        <strong style="font-size: 1.1rem;">${peak.name || peak.ename || 'بدون نام'}</strong>
+        ${peak.ename ? `<div style="color:#64748b; font-size:0.9rem;">${peak.ename}</div>` : ''}
+        <div style="margin-top: 8px;">
+          <div>ارتفاع: <b>${peak.height ? peak.height + ' متر' : '—'}</b></div>
+          ${peak.states ? `<div>استان: <b>${peak.states}</b></div>` : ''}
+          ${peak.locations ? `<div>موقعیت: <b>${peak.locations}</b></div>` : ''}
+          ${peak.folders ? `<div>مجموعه: <b>${peak.folders}</b></div>` : ''}
+          <div>گزارش هواشناسی: <b><a href="https://www.meteoblue.com/en/weather/week/${peak.lat}N${peak.lng}E" target="_blank" 
+            style="color:#2563eb;">7 روز آینده</a></b>
+          </div>
+        </div>
+        <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; direction:ltr;">
+          <a href="https://www.wikiloc.com/wikiloc/map.do?sw=${peak.lat-0.1},${peak.lng-0.1}&ne=${peak.lat+0.1},${peak.lng+0.1}" 
+            target="_blank" style="color:#2563eb;"><img src="wikiloc.ico" width="16"></a>
+          <a href="https://www.google.com/maps?q=${peak.lat},${peak.lng}" target="_blank" 
+          style="color:#2563eb;"><img src="maps.ico" width="16"></a>
+          <a href="https://earth.google.com/web/@${peak.lat},${peak.lng},2000a" target="_blank" 
+          style="color:#2563eb;"><img src="earth.ico" width="16"></a>
+        </div>
+      </div>
+    `;
+
+    marker.bindPopup(popupContent);
+    marker.addTo(markersLayer!);
+    bounds.push([peak.lat, peak.lng]);
+  });
+
+  if (bounds.length > 0) {
+    map.fitBounds(bounds as L.LatLngBoundsExpression, {
+      padding: [50, 50],
+      maxZoom: 12,
+    });
+  }
+}
+
+export function clearMap() {
+  if (markersLayer) {
+    markersLayer.clearLayers();
+  }
+}
