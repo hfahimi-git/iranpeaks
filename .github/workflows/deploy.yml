@@ -26,6 +26,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: ls -la && npm ls vite typescript
       - run: npm run build      # همان tsc && vite build که خروجی را در dist می‌سازد
 
       - uses: actions/upload-pages-artifact@v3
