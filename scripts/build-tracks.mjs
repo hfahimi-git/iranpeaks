@@ -44,7 +44,9 @@ const CFG = {
   gapMinutes: 60,          // توقف ضبط حداقل این‌قدر + جابه‌جایی بیش از gapAfterPauseM
   gapAfterPauseM: 500,
   gapMaxSpeedMs: 40,       // جهش با سرعت غیرممکن (۱۴۴ km/h) بیش از ۱ کیلومتر
-  gapNoTimeM: 3000,        // اگر زمان ندارد: جهش بیش از ۳ کیلومتر
+  gapNoTimeM: 3000,        // اگر زمان ندارد (یا زمان‌ها قابل اعتماد نیستند): جهش بیش از ۳ کیلومتر
+  dupEndsM: 150,           // تکه‌ی تکراری: ابتدا و انتهایش حداکثر این‌قدر با تکه‌ی قبلی فاصله دارد
+  dupNearM: 40,            // ...و حداقل ۹۰٪ نقطه‌هایش در این فاصله از مسیر قبلی باشند
 };
 
 // ───────────────────────── هندسه ─────────────────────────
@@ -199,13 +201,25 @@ function parsePoints(text, tag) {
   return pts;
 }
 
+/** زمان‌ها فقط وقتی قابل اعتمادند که واقعاً رو به جلو بروند (بعضی منبع‌ها یک زمان ثابت برای همه‌ی نقطه‌ها می‌نویسند) */
+function timesReliable(seg) {
+  let ok = 0, n = 0;
+  for (let i = 1; i < seg.length; i++) {
+    if (seg[i - 1].t == null || seg[i].t == null) continue;
+    n++;
+    if (seg[i].t > seg[i - 1].t) ok++;
+  }
+  return n >= 3 && ok / n >= 0.8;
+}
+
 /** آیا بین دو نقطه‌ی پیاپی وقفه‌ی ضبط هست؟ (آن‌وقت خط صافِ بینشان رسم نمی‌شود) */
-function isGap(a, b) {
+function isGap(a, b, useTime) {
   const d = haversine(a.lat, a.lng, b.lat, b.lng);
-  if (a.t != null && b.t != null) {
+  if (useTime && a.t != null && b.t != null) {
     const dtMin = (b.t - a.t) / 60000;
+    if (dtMin <= 0) return d >= CFG.gapAfterPauseM; // زمان ثابت یا برگشتی همراه با پرش مکانی
     if (dtMin >= CFG.gapMinutes && d >= CFG.gapAfterPauseM) return true;
-    return dtMin > 0 && d >= 1000 && d / (dtMin * 60) > CFG.gapMaxSpeedMs;
+    return d >= 1000 && d / (dtMin * 60) > CFG.gapMaxSpeedMs;
   }
   return d >= CFG.gapNoTimeM;
 }
@@ -214,14 +228,43 @@ function splitGaps(rawSegs) {
   const out = [];
   let breaks = Math.max(0, rawSegs.length - 1);
   for (const seg of rawSegs) {
+    const useTime = timesReliable(seg);
     let cur = [seg[0]];
     for (let i = 1; i < seg.length; i++) {
-      if (isGap(seg[i - 1], seg[i])) { out.push(cur); cur = []; breaks++; }
+      if (isGap(seg[i - 1], seg[i], useTime)) { out.push(cur); cur = []; breaks++; }
       cur.push(seg[i]);
     }
     out.push(cur);
   }
   return { segs: out.filter((seg) => seg.length >= 2), breaks };
+}
+
+/** کمترین فاصله‌ی یک نقطه تا یک تکه‌مسیر (متر) */
+function distToSeg(p, seg) {
+  let best = Infinity;
+  for (let i = 0; i < seg.length - 1; i++) best = Math.min(best, pointToSegment(p.lat, p.lng, seg[i], seg[i + 1]).d);
+  return best;
+}
+
+/** آیا s همان مسیر k را با همان جهت تکرار کرده؟ (رفت‌وبرگشت با جهت معکوس تکراری حساب نمی‌شود) */
+function repeatsRoute(s, k) {
+  const sf = s[0], sl = s[s.length - 1], kf = k[0], kl = k[k.length - 1];
+  if (haversine(sf.lat, sf.lng, kf.lat, kf.lng) > CFG.dupEndsM) return false;
+  if (haversine(sl.lat, sl.lng, kl.lat, kl.lng) > CFG.dupEndsM) return false;
+  let near = 0;
+  for (const p of s) if (distToSeg(p, k) <= CFG.dupNearM) near++;
+  return near / s.length >= 0.9;
+}
+
+/** بعضی فایل‌ها یک مسیر را دو بار پشت سر هم دارند (مثلاً دو ضبط ادغام‌شده)؛ نسخه‌های تکراری حذف می‌شوند */
+function dedupeSegments(segs) {
+  const kept = [];
+  let dropped = 0;
+  for (const seg of segs) {
+    if (kept.some((k) => repeatsRoute(seg, k))) dropped++;
+    else kept.push(seg);
+  }
+  return { segs: kept, dropped };
 }
 
 function parseGpx(xml, fallbackTitle) {
@@ -293,7 +336,9 @@ for (const file of files) {
 
   const parsed = parseGpx(buf.toString('utf8'), basename(file, '.gpx'));
   const { title, src, by } = parsed;
-  const { segs, breaks } = splitGaps(parsed.segs);
+  const split = splitGaps(parsed.segs);
+  const { segs, dropped } = dedupeSegments(split.segs);
+  const breaks = split.breaks - dropped; // وقفه‌ای که به‌خاطر حذف نسخه‌ی تکراری از بین رفته را نشمار
   const pts = segs.flat();
   if (pts.length < 2) { console.warn(`⚠ ترک خالی: ${file}`); continue; }
 
@@ -309,7 +354,7 @@ for (const file of files) {
     return sum + (ts.length > 1 ? (Math.max(...ts) - Math.min(...ts)) / 60000 : 0);
   }, 0);
   const t = {
-    id, file, title, src, by, pts, segs, breaks, top,
+    id, file, title, src, by, pts, segs, breaks, dropped, top,
     km: lengthKm(segs),
     ...climb(segs),                                                   // up, down
     max: withEle.length ? Math.round(top.ele) : null,
@@ -456,6 +501,11 @@ console.log(`
 حجم خروجی       : ${(totalBytes / 1024).toFixed(1)} KB  (${Object.keys(index.tracks).length} فایل مسیر)
 `);
 for (const d of dupes) console.log('  تکراری:', d);
+const duped = tracks.filter((t) => t.dropped > 0);
+if (duped.length) {
+  console.log(`مسیرهایی که یک مسیر را دو بار داشتند (نسخه‌ی تکراری حذف شد): ${duped.length}`);
+  for (const t of duped.slice(0, 25)) console.log(`  ${t.dropped} تکرار  ${t.file}`);
+}
 const broken = tracks.filter((t) => t.breaks > 0);
 if (broken.length) {
   console.log(`مسیرهای دارای وقفه/چند تکه (خط صاف بینشان رسم نمی‌شود): ${broken.length}`);
