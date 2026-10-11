@@ -2,6 +2,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { searchPeaks, getPeaksByState } from '../db/queries';
+import { initTracks, clearTracks, renderPeakTracks } from './tracks';
 
 // اصلاح آیکون پیش‌فرض Leaflet (مشکل معروف با Vite)
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -12,6 +13,7 @@ const DefaultIcon = L.icon({
   shadowUrl: iconShadow,
   iconSize: [25, 41],
   iconAnchor: [12, 41],
+  popupAnchor: [1, -34], // نوک پاپ‌آپ روی سر سوزن بنشیند، نه روی نوک پایینش (که کل مارکر را می‌پوشاند)
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
@@ -24,11 +26,12 @@ export function initMap(containerId: string = 'map'): L.Map {
   map = L.map(containerId).setView([32.4279, 53.6880], 6); // مرکز ایران
 
   L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
-                attribution: '<a href="https://www.cyclosm.org/">CyclOSM v0.6</a> | Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    attribution: '<a href="https://www.cyclosm.org/">CyclOSM v0.6</a> | Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 18,
   }).addTo(map);
 
   markersLayer = L.layerGroup().addTo(map);
+  initTracks(map);
 
   return map;
 }
@@ -37,6 +40,7 @@ export async function loadPeaks(query: string) {
   if (!map || !markersLayer) return;
 
   markersLayer.clearLayers();
+  clearTracks();
 
   if (!query || query.trim().length < 2) {
     return;
@@ -50,6 +54,7 @@ export async function loadPeaksByState(state: string) {
   if (!map || !markersLayer) return;
 
   markersLayer.clearLayers();
+  clearTracks();
 
   if (!state || state.trim().length < 2) {
     return;
@@ -83,6 +88,7 @@ function renderPeaksOnMap(peaks: any[]) {
             style="color:#2563eb;">7 روز آینده</a></b>
           </div>
         </div>
+        <div class="peak-tracks-slot"></div>
         <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; direction:ltr;">
           <a href="https://www.wikiloc.com/wikiloc/map.do?sw=${peak.lat-0.1},${peak.lng-0.1}&ne=${peak.lat+0.1},${peak.lng+0.1}" 
             target="_blank" style="color:#2563eb;"><img src="wikiloc.ico" width="16"></a>
@@ -94,7 +100,23 @@ function renderPeaksOnMap(peaks: any[]) {
       </div>
     `;
 
-    marker.bindPopup(popupContent);
+    // محتوا به‌صورت عنصر DOM ثابت داده می‌شود تا popup.update() بخش مسیرها را پاک نکند
+    const content = document.createElement('div');
+    content.innerHTML = popupContent;
+    marker.bindPopup(content, { maxWidth: 320 });
+    marker.on('popupopen', (e: L.PopupEvent) => {
+      // پاپ‌آپ هیچ‌وقت بزرگ‌تر از نقشه نشود؛ اگر شد داخل خودش اسکرول می‌خورد
+      // و با حاشیه‌ی autopan از زیر دکمه‌های زوم بیرون می‌ماند
+      const size = map?.getSize() ?? L.point(900, 580);
+      e.popup.options.maxHeight = Math.max(160, size.y - 90);
+      // ~44px پدینگ پاپ‌آپ + 55px حاشیه‌ی چپ (دکمه‌های زوم) + 10px حاشیه‌ی راست
+      e.popup.options.maxWidth = Math.max(180, Math.min(320, size.x - 109));
+      e.popup.options.autoPanPaddingTopLeft = [55, 10];
+      e.popup.options.autoPanPaddingBottomRight = [10, 10];
+      e.popup.update();
+      const slot = content.querySelector<HTMLElement>('.peak-tracks-slot');
+      if (slot) void renderPeakTracks(slot, Number(peak.oid), () => e.popup.update());
+    });
     marker.addTo(markersLayer!);
     bounds.push([peak.lat, peak.lng]);
   });
@@ -111,4 +133,5 @@ export function clearMap() {
   if (markersLayer) {
     markersLayer.clearLayers();
   }
+  clearTracks();
 }

@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import {VitePWA} from "vite-plugin-pwa";
 
 export default defineConfig({
-  base: '/',                    // چون روت GitHub Pages هست
+  base: '/iranpeaks/',                    // چون روت GitHub Pages هست
   build: { outDir: 'dist' },
   optimizeDeps: { exclude: ['wa-sqlite'] },
   assetsInclude: ['**/*.wasm'],
@@ -17,7 +17,7 @@ export default defineConfig({
         theme_color: '#2563eb',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/',
+        start_url: '/iranpeaks/',
         lang: 'fa',
         dir: 'rtl',
         icons: [
@@ -51,6 +51,18 @@ export default defineConfig({
               expiration: {
                 maxEntries: 200,
                 maxAgeSeconds: 60 * 60 * 24 * 30 // ۳۰ روز
+              }
+            }
+          },
+          {
+            // مسیرهای صعود: بعد از اولین بازدید کش می‌شوند (precache نمی‌شوند تا نصب PWA سنگین نشود)
+            urlPattern: ({ url }: { url: URL }) => url.pathname.includes('/tracks/'),
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'peak-tracks',
+              expiration: {
+                maxEntries: 300,
+                maxAgeSeconds: 60 * 60 * 24 * 90 // ۹۰ روز
               }
             }
           }

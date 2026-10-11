@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tracks": "node scripts/build-tracks.mjs"
   },
   "devDependencies": {
     "@types/sql.js": "^1.4.11",

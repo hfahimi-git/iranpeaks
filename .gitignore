@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# فایل‌های GPX خام و گزارش‌های محلی تطبیق مسیرها
+gpx/
+reports/

@@ -14,9 +14,9 @@ export async function initDB() {
     locateFile: () => sqlWasm
   });
 
-  const response = await fetch('/data/peaks.db');
+  const response = await fetch(`${import.meta.env.BASE_URL}data/peaks.db`);
   if (!response.ok) {
-    throw new Error('فایل /data/peaks.db پیدا نشد');
+    throw new Error('فایل data/peaks.db پیدا نشد');
   }
 
   const buffer = await response.arrayBuffer();
