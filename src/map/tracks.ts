@@ -22,9 +22,15 @@ interface TrackIndex {
   tracks: Record<string, TrackMeta>;
 }
 
+type TrackPoint = [number, number, number?]; // [lat, lng, ele?]
+
 interface TrackFile {
-  p: [number, number, number?][];       // [lat, lng, ele?]
+  s?: TrackPoint[][];  // تکه‌های مسیر؛ بین دو تکه (وقفه‌ی ضبط) خطی رسم نمی‌شود
+  p?: TrackPoint[];    // فرمت قدیمی (یک تکه)
 }
+
+/** تکه‌های مسیر؛ فایل‌های قدیمی فقط p دارند */
+const segmentsOf = (data: TrackFile): TrackPoint[][] => data.s ?? (data.p ? [data.p] : []);
 
 const BASE = import.meta.env.BASE_URL;
 const COLORS = ['#dc2626', '#ea580c', '#7c3aed', '#0891b2', '#16a34a', '#c026d3'];
@@ -75,7 +81,7 @@ function sourceInfo(src?: string): { href: string; label: string } | null {
     if (!/^https?:$/.test(u.protocol)) return null;
     const host = u.hostname.replace(/^www\./, '');
     if (/(^|\.)garmin\./i.test(host)) return null;
-    return { href: u.href, label: host === 'wikiloc.com' ? 'ویکی‌لاک' : 'منبع مسیر' };
+    return { href: u.href, label: host === 'wikiloc.com' ? 'ویکی‌لوک' : 'منبع مسیر' };
   } catch {
     return null;
   }
@@ -118,12 +124,13 @@ async function getShape(id: string, title: string): Promise<L.FeatureGroup> {
   if (cached) return cached;
 
   const data = await getData(id);
-  const latlngs = data.p.map(([lat, lng]) => [lat, lng] as L.LatLngTuple);
+  // آرایه‌ی تو در تو = چند خط جدا (بدون خط واصل بین تکه‌ها)
+  const latlngs = segmentsOf(data).map((seg) => seg.map(([lat, lng]) => [lat, lng] as L.LatLngTuple));
   const shape = L.featureGroup([
     // حاشیه‌ی سفید تا مسیر روی هر زمینه‌ای دیده شود
     L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.85, interactive: false }),
     L.polyline(latlngs, { color: colorOf(id), weight: 4, opacity: 0.95 }).bindTooltip(title, { sticky: true }),
-    L.circleMarker(latlngs[0], { radius: 5, color: '#ffffff', weight: 2, fillColor: '#16a34a', fillOpacity: 1, interactive: false }),
+    L.circleMarker(latlngs[0][0], { radius: 5, color: '#ffffff', weight: 2, fillColor: '#16a34a', fillOpacity: 1, interactive: false }),
   ]);
   shapes.set(id, shape);
   return shape;
@@ -157,8 +164,13 @@ const escXml = (s: string): string =>
 /** GPX را در مرورگر از همان داده‌ی لودشده می‌سازد؛ پس برای همه‌ی مسیرها (از هر منبعی) کار می‌کند و حجمی به سایت اضافه نمی‌کند. */
 async function downloadGpx(id: string, meta: TrackMeta): Promise<void> {
   const data = await getData(id);
-  const pts = data.p
-    .map(([lat, lng, ele]) => `<trkpt lat="${lat}" lon="${lng}">${ele === undefined ? '' : `<ele>${ele}</ele>`}</trkpt>`)
+  const trksegs = segmentsOf(data)
+    .map((seg) => {
+      const pts = seg
+        .map(([lat, lng, ele]) => `<trkpt lat="${lat}" lon="${lng}">${ele === undefined ? '' : `<ele>${ele}</ele>`}</trkpt>`)
+        .join('');
+      return `<trkseg>${pts}</trkseg>`;
+    })
     .join('');
   const link = sourceInfo(meta.src);
   const xml =
@@ -168,7 +180,7 @@ async function downloadGpx(id: string, meta: TrackMeta): Promise<void> {
     (meta.by ? `<author><name>${escXml(meta.by)}</name></author>` : '') +
     (link ? `<link href="${escXml(link.href)}"><text>${escXml(link.label)}</text></link>` : '') +
     '</metadata>' +
-    `<trk><name>${escXml(meta.n)}</name><trkseg>${pts}</trkseg></trk></gpx>`;
+    `<trk><name>${escXml(meta.n)}</name>${trksegs}</trk></gpx>`;
 
   const fileName = meta.n.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'track';
   const url = URL.createObjectURL(new Blob([xml], { type: 'application/gpx+xml' }));
@@ -201,16 +213,27 @@ function downloadButton(className: string, id: string, meta: TrackMeta): HTMLBut
 
 // ───────────────────────── نمودار ارتفاعی ─────────────────────────
 function profileSvg(data: TrackFile, color: string): SVGSVGElement | null {
-  const pts = data.p.filter((q): q is [number, number, number] => q[2] !== undefined);
+  // فاصله‌ی تجمعی (تقریب تخت، برای نمودار کافی است)؛ پرش بین تکه‌ها فاصله حساب نمی‌شود
+  const pts: [number, number, number][] = [];
+  const dist: number[] = [];
+  let acc = 0;
+  for (const seg of segmentsOf(data)) {
+    let prev: [number, number, number] | null = null;
+    for (const q of seg) {
+      if (q[2] === undefined) continue;
+      const cur: [number, number, number] = [q[0], q[1], q[2]];
+      if (prev) {
+        const dy = (cur[0] - prev[0]) * 110540;
+        const dx = (cur[1] - prev[1]) * 111320 * Math.cos((cur[0] * Math.PI) / 180);
+        acc += Math.hypot(dx, dy);
+      }
+      pts.push(cur);
+      dist.push(acc);
+      prev = cur;
+    }
+  }
   if (pts.length < 2) return null;
 
-  // فاصله‌ی تجمعی (تقریب تخت، برای نمودار کافی است)
-  const dist = [0];
-  for (let i = 1; i < pts.length; i++) {
-    const dy = (pts[i][0] - pts[i - 1][0]) * 110540;
-    const dx = (pts[i][1] - pts[i - 1][1]) * 111320 * Math.cos((pts[i][0] * Math.PI) / 180);
-    dist.push(dist[i - 1] + Math.hypot(dx, dy));
-  }
   const total = dist[dist.length - 1] || 1;
   const eMin = Math.min(...pts.map((q) => q[2]));
   const eMax = Math.max(...pts.map((q) => q[2]));

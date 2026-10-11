@@ -40,6 +40,11 @@ const CFG = {
   reviewDeltaH: 150,    // سطح B: حداکثر اختلاف ارتفاع
   simplifyM: 8,         // تلورانس ساده‌سازی (متر)
   mergeNewPeakM: 300,   // ادغام کاندیداهای قله‌ی جدید که به هم نزدیک‌اند
+  // وقفه‌ی ضبط: به‌جای وصل کردن دو سرِ وقفه با خط صاف، مسیر دو تکه می‌شود
+  gapMinutes: 60,          // توقف ضبط حداقل این‌قدر + جابه‌جایی بیش از gapAfterPauseM
+  gapAfterPauseM: 500,
+  gapMaxSpeedMs: 40,       // جهش با سرعت غیرممکن (۱۴۴ km/h) بیش از ۱ کیلومتر
+  gapNoTimeM: 3000,        // اگر زمان ندارد: جهش بیش از ۳ کیلومتر
 };
 
 // ───────────────────────── هندسه ─────────────────────────
@@ -65,13 +70,15 @@ function pointToSegment(plat, plng, a, b) {
 }
 
 /** کمترین فاصله‌ی قله تا کل مسیر + ارتفاع درون‌یابی‌شده‌ی مسیر در همان نقطه */
-function nearestOnTrack(peak, pts) {
+function nearestOnTrack(peak, segs) {
   let best = { d: Infinity, ele: null };
-  for (let i = 0; i < pts.length - 1; i++) {
-    const { d, t } = pointToSegment(peak.lat, peak.lng, pts[i], pts[i + 1]);
-    if (d < best.d) {
-      const e1 = pts[i].ele, e2 = pts[i + 1].ele;
-      best = { d, ele: e1 != null && e2 != null ? e1 + t * (e2 - e1) : (e1 ?? e2) };
+  for (const pts of segs) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const { d, t } = pointToSegment(peak.lat, peak.lng, pts[i], pts[i + 1]);
+      if (d < best.d) {
+        const e1 = pts[i].ele, e2 = pts[i + 1].ele;
+        best = { d, ele: e1 != null && e2 != null ? e1 + t * (e2 - e1) : (e1 ?? e2) };
+      }
     }
   }
   return best;
@@ -98,23 +105,28 @@ function simplify(pts, tol) {
   return pts.filter((_, i) => keep[i]);
 }
 
-function lengthKm(pts) {
+function lengthKm(segs) {
   let m = 0;
-  for (let i = 0; i < pts.length - 1; i++) m += haversine(pts[i].lat, pts[i].lng, pts[i + 1].lat, pts[i + 1].lng);
+  for (const pts of segs) {
+    for (let i = 0; i < pts.length - 1; i++) m += haversine(pts[i].lat, pts[i].lng, pts[i + 1].lat, pts[i + 1].lng);
+  }
   return m / 1000;
 }
 
 /** صعود و فرود تجمعی با هیسترزیس (نویز ارتفاع GPS را حذف می‌کند) */
-function climb(pts, threshold = 10) {
-  let up = 0, down = 0, anchor = null;
-  for (const p of pts) {
-    if (p.ele == null) continue;
-    if (anchor == null) { anchor = p.ele; continue; }
-    const diff = p.ele - anchor;
-    if (Math.abs(diff) >= threshold) {
-      if (diff > 0) up += diff;
-      else down -= diff;
-      anchor = p.ele;
+function climb(segs, threshold = 10) {
+  let up = 0, down = 0;
+  for (const pts of segs) {
+    let anchor = null; // هر تکه از نو شروع می‌شود؛ پرش بین تکه‌ها صعود/فرود حساب نمی‌شود
+    for (const p of pts) {
+      if (p.ele == null) continue;
+      if (anchor == null) { anchor = p.ele; continue; }
+      const diff = p.ele - anchor;
+      if (Math.abs(diff) >= threshold) {
+        if (diff > 0) up += diff;
+        else down -= diff;
+        anchor = p.ele;
+      }
     }
   }
   return { up: Math.round(up), down: Math.round(down) };
@@ -173,6 +185,45 @@ function okSource(href) {
   }
 }
 
+function parsePoints(text, tag) {
+  const pts = [];
+  for (const chunk of text.split(`<${tag}`).slice(1)) {
+    const lat = Number(chunk.match(/\blat=["']([-+\d.]+)["']/)?.[1]);
+    const lng = Number(chunk.match(/\blon=["']([-+\d.]+)["']/)?.[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const eleRaw = chunk.match(/<ele>\s*([-+\d.eE]+)\s*<\/ele>/)?.[1];
+    const ele = eleRaw == null ? null : Number(eleRaw);
+    const t = Date.parse(chunk.match(/<time>\s*([^<\s]+)\s*<\/time>/)?.[1] ?? '');
+    pts.push({ lat, lng, ele: Number.isFinite(ele) ? ele : null, t: Number.isFinite(t) ? t : null });
+  }
+  return pts;
+}
+
+/** آیا بین دو نقطه‌ی پیاپی وقفه‌ی ضبط هست؟ (آن‌وقت خط صافِ بینشان رسم نمی‌شود) */
+function isGap(a, b) {
+  const d = haversine(a.lat, a.lng, b.lat, b.lng);
+  if (a.t != null && b.t != null) {
+    const dtMin = (b.t - a.t) / 60000;
+    if (dtMin >= CFG.gapMinutes && d >= CFG.gapAfterPauseM) return true;
+    return dtMin > 0 && d >= 1000 && d / (dtMin * 60) > CFG.gapMaxSpeedMs;
+  }
+  return d >= CFG.gapNoTimeM;
+}
+
+function splitGaps(rawSegs) {
+  const out = [];
+  let breaks = Math.max(0, rawSegs.length - 1);
+  for (const seg of rawSegs) {
+    let cur = [seg[0]];
+    for (let i = 1; i < seg.length; i++) {
+      if (isGap(seg[i - 1], seg[i])) { out.push(cur); cur = []; breaks++; }
+      cur.push(seg[i]);
+    }
+    out.push(cur);
+  }
+  return { segs: out.filter((seg) => seg.length >= 2), breaks };
+}
+
 function parseGpx(xml, fallbackTitle) {
   const trkAt = xml.search(/<trk[\s>]/);
   const afterTrk = trkAt >= 0 ? xml.slice(trkAt) : xml;
@@ -188,18 +239,11 @@ function parseGpx(xml, fallbackTitle) {
   const href = decode(meta.replace(/<author>[\s\S]*?<\/author>/g, '').match(/<link\s+[^>]*href=["']([^"']+)["']/)?.[1] ?? '');
   const src = okSource(href);
 
+  // هر <trkseg> یک تکه است (اگر نبود، کل فایل یک تکه)
   const tag = xml.includes('<trkpt') ? 'trkpt' : 'rtept';
-  const pts = [];
-  for (const chunk of xml.split(`<${tag}`).slice(1)) {
-    const lat = Number(chunk.match(/\blat=["']([-+\d.]+)["']/)?.[1]);
-    const lng = Number(chunk.match(/\blon=["']([-+\d.]+)["']/)?.[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-    const eleRaw = chunk.match(/<ele>\s*([-+\d.eE]+)\s*<\/ele>/)?.[1];
-    const ele = eleRaw == null ? null : Number(eleRaw);
-    const t = Date.parse(chunk.match(/<time>\s*([^<\s]+)\s*<\/time>/)?.[1] ?? '');
-    pts.push({ lat, lng, ele: Number.isFinite(ele) ? ele : null, t: Number.isFinite(t) ? t : null });
-  }
-  return { title, src, by, pts };
+  const blocks = [...xml.matchAll(/<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/g)].map((m) => m[1]);
+  const segs = (blocks.length ? blocks : [xml]).map((text) => parsePoints(text, tag)).filter((seg) => seg.length);
+  return { title, src, by, segs };
 }
 
 // ───────────────────────── CSV ─────────────────────────
@@ -247,7 +291,10 @@ for (const file of files) {
   if (seen.has(id)) { dupes.push(`${file} = ${seen.get(id)}`); continue; }
   seen.set(id, file);
 
-  const { title, src, by, pts } = parseGpx(buf.toString('utf8'), basename(file, '.gpx'));
+  const parsed = parseGpx(buf.toString('utf8'), basename(file, '.gpx'));
+  const { title, src, by } = parsed;
+  const { segs, breaks } = splitGaps(parsed.segs);
+  const pts = segs.flat();
   if (pts.length < 2) { console.warn(`⚠ ترک خالی: ${file}`); continue; }
 
   const withEle = pts.filter((p) => p.ele != null);
@@ -256,11 +303,15 @@ for (const file of files) {
     : pts.reduce((a, b) => (haversine(pts[0].lat, pts[0].lng, b.lat, b.lng) > haversine(pts[0].lat, pts[0].lng, a.lat, a.lng) ? b : a));
 
   const times = pts.map((p) => p.t).filter((v) => v != null);
-  const spanMin = times.length > 1 ? (Math.max(...times) - Math.min(...times)) / 60000 : 0;
+  // مدت = مجموع بازه‌ی هر تکه (شب‌ماندن و وقفه‌ها شمرده نمی‌شوند)
+  const spanMin = segs.reduce((sum, seg) => {
+    const ts = seg.map((p) => p.t).filter((v) => v != null);
+    return sum + (ts.length > 1 ? (Math.max(...ts) - Math.min(...ts)) / 60000 : 0);
+  }, 0);
   const t = {
-    id, file, title, src, by, pts, top,
-    km: lengthKm(pts),
-    ...climb(pts),                                                   // up, down
+    id, file, title, src, by, pts, segs, breaks, top,
+    km: lengthKm(segs),
+    ...climb(segs),                                                   // up, down
     max: withEle.length ? Math.round(top.ele) : null,
     min: withEle.length ? Math.round(Math.min(...withEle.map((p) => p.ele))) : null,
     loop: haversine(pts[0].lat, pts[0].lng, pts.at(-1).lat, pts.at(-1).lng) <= 200,
@@ -282,7 +333,7 @@ for (const file of files) {
   const box = [Math.min(...lats) - pad, Math.max(...lats) + pad, Math.min(...lngs) - pad, Math.max(...lngs) + pad];
   for (const peak of peaks) {
     if (peak.lat < box[0] || peak.lat > box[1] || peak.lng < box[2] || peak.lng > box[3]) continue;
-    const { d, ele } = nearestOnTrack(peak, pts);
+    const { d, ele } = nearestOnTrack(peak, segs);
     if (d > CFG.matchDistM) continue;
     const dh = ele != null && peak.height != null ? Math.abs(peak.height - ele) : null;
     if (dh == null) addReview('review', peak, d, ele, dh, 'ارتفاع در GPX یا دیتابیس نیست');
@@ -327,12 +378,14 @@ for (const f of readdirSync(OUT_DIR)) if (/^([0-9a-f]{8}|index)\.json$/.test(f))
 const index = { v: 1, peaks: {}, tracks: {} };
 let totalBytes = 0;
 for (const t of tracks.filter((x) => x.A.length)) {
-  const p = simplify(t.pts, CFG.simplifyM).map((q) => {
-    const r = [Number(q.lat.toFixed(5)), Number(q.lng.toFixed(5))];
-    if (q.ele != null) r.push(Math.round(q.ele));
-    return r;
-  });
-  const body = JSON.stringify({ id: t.id, n: t.title, p });
+  const out = t.segs.map((seg) =>
+    simplify(seg, CFG.simplifyM).map((q) => {
+      const r = [Number(q.lat.toFixed(5)), Number(q.lng.toFixed(5))];
+      if (q.ele != null) r.push(Math.round(q.ele));
+      return r;
+    }),
+  );
+  const body = JSON.stringify({ id: t.id, n: t.title, s: out });
   writeFileSync(join(OUT_DIR, `${t.id}.json`), body);
   totalBytes += Buffer.byteLength(body);
 
@@ -403,3 +456,8 @@ console.log(`
 حجم خروجی       : ${(totalBytes / 1024).toFixed(1)} KB  (${Object.keys(index.tracks).length} فایل مسیر)
 `);
 for (const d of dupes) console.log('  تکراری:', d);
+const broken = tracks.filter((t) => t.breaks > 0);
+if (broken.length) {
+  console.log(`مسیرهای دارای وقفه/چند تکه (خط صاف بینشان رسم نمی‌شود): ${broken.length}`);
+  for (const t of broken.slice(0, 25)) console.log(`  ${t.breaks} وقفه  ${t.file}`);
+}
