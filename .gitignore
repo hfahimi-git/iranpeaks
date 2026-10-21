@@ -23,7 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 
+data
+
 # فایل‌های GPX خام و گزارش‌های محلی تطبیق مسیرها
-gpx/
-reports/
-data/
+gpx
+reports
