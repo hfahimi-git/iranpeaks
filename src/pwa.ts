@@ -5,22 +5,60 @@
 //    متاتگ <meta name="app-version"> را با شناسهٔ بیلد خودش مقایسه می‌کند.
 //    اینجا نام فایل‌های هش‌دار هم عوض می‌شود (index-XXXX.js)، پس اگر تفاوت باشد
 //    یک‌بار ریلود می‌کنیم و کاربر کد تازه را می‌گیرد — بدون Ctrl+F5.
-//    این روش برای هر دو حالت (مرورگر و PWA نصب‌شده) کار می‌کند و به رفتار
-//    کش/CDN سرویس‌ورکر وابسته نیست.
 // ۲) پشتیبان: اگر نصب‌شدن سرویس‌ورکر جدید تغییر کنترل را بدهد (autoUpdate)، ریلود می‌کنیم.
-//
-// نکته: از Cache API عمداً استفاده نمی‌کنیم؛ fetch با cache:'no-store' حتی وقتی
-// نسخهٔ قبلی سرویس‌ورکر کنترل صفحه را دارد، درخواست را به شبکه می‌فرستد.
+
+const RELOAD_GUARD_KEY = 'iranpeaks:ver-reload';
+
+function justReloadedForUpdate(): boolean {
+  try {
+    const raw = sessionStorage.getItem(RELOAD_GUARD_KEY);
+    if (!raw) return false;
+    const at = Number(raw);
+    if (Number.isNaN(at)) {
+      sessionStorage.removeItem(RELOAD_GUARD_KEY);
+      return false;
+    }
+    // اگر کمتر از ۱۵ ثانیه پیش رفرش شده، از بررسی‌های بعدی صرف‌نظر کن
+    if (Date.now() - at < 15000) return true;
+    sessionStorage.removeItem(RELOAD_GUARD_KEY);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function markReloading(): void {
+  try {
+    sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
+  } catch {
+    // ignore
+  }
+}
+
 export function watchForUpdates(): void {
   if (typeof __BUILD_ID__ !== 'string' || !__BUILD_ID__) return;
+
+  // بعد از رفرش خودکار آپدیت، ۱۵ ثانیه اول هیچ‌چک دیگه‌ای نکن
+  if (justReloadedForUpdate()) return;
 
   const INTERVAL = 5 * 60 * 1000; // بررسی دوره‌ای هر ۵ دقیقه
   const MIN_CHECK_GAP = 30 * 1000; // حداقل فاصله بین دو بررسی
   let reloading = false;
   let lastCheck = 0;
 
+  const reloadOnce = (): void => {
+    if (reloading) return;
+    if (sessionStorage.getItem(RELOAD_GUARD_KEY)) return;
+    reloading = true;
+    markReloading();
+    location.reload();
+  };
+
   const checkRemote = async (): Promise<void> => {
+    if (reloading) return;
     if (document.visibilityState !== 'visible') return;
+    if (justReloadedForUpdate()) return;
+
     const now = Date.now();
     if (now - lastCheck < MIN_CHECK_GAP) return;
     lastCheck = now;
@@ -33,24 +71,20 @@ export function watchForUpdates(): void {
       if (!res.ok) return;
       const html = await res.text();
       const match = html.match(/<meta\s+name="app-version"\s+content="([^"]+)"/i);
-      if (match && match[1] !== __BUILD_ID__) reloadOnce();
+      if (match && match[1] !== __BUILD_ID__) {
+        reloadOnce();
+      }
     } catch {
       // آفلاین یا شبکهٔ قطع — بررسی بعدی
     }
   };
 
-  const reloadOnce = (): void => {
-    if (reloading) return;
-    reloading = true;
-    location.reload();
-  };
-
   const swUpdate = (): void => {
     if (!('serviceWorker' in navigator)) return;
     void navigator.serviceWorker
-      .getRegistration()
-      .then((reg) => reg?.update())
-      .catch(() => undefined);
+        .getRegistration()
+        .then((reg) => reg?.update())
+        .catch(() => undefined);
   };
 
   const check = (): void => {
@@ -62,17 +96,41 @@ export function watchForUpdates(): void {
   window.setInterval(check, INTERVAL);
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') check();
+    if (document.visibilityState === 'visible') {
+      if (justReloadedForUpdate()) return;
+      check();
+    }
   });
-  window.addEventListener('online', check);
-  window.addEventListener('pageshow', () => void checkRemote());
+  window.addEventListener('online', () => {
+    if (justReloadedForUpdate()) return;
+    check();
+  });
+
+  // pageshow نباید مستقیم checkRemote بزنه چون باعث چرخه میشه
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) {
+      // برگشت از bfcache
+      if (justReloadedForUpdate()) return;
+      check();
+    }
+  });
 
   if ('serviceWorker' in navigator) {
     const hadController = Boolean(navigator.serviceWorker.controller);
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (hadController) reloadOnce(); // اولین نصب ریلود لازم ندارد
+      if (reloading) return;
+      if (justReloadedForUpdate()) return;
+      if (hadController) {
+        // فقط وقتی کنترل از SW قبلی منتقل میشه (آپدیت واقعی) رفرش کن
+        reloadOnce();
+      }
+      // اولین بار نصب SW نباید رفرش کنه
     });
   }
 
-  void checkRemote();
+  // اولین بررسی با تاخیر کم تا از race با بقیه event ها جلوگیری شه
+  window.setTimeout(() => {
+    if (justReloadedForUpdate()) return;
+    void checkRemote();
+  }, 500);
 }
