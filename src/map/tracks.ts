@@ -1,7 +1,8 @@
 // src/map/tracks.ts
 // نمایش مسیرهای صعود (GPX ساده‌شده) روی نقشه — بدون هیچ کتابخانه‌ی اضافه.
-// index.json یک‌بار و فقط موقع باز شدن اولین پاپ‌آپ لود می‌شود؛ هر مسیر هم فقط با کلیک.
+// متادیتای هر قله یک فایل کوچک است که فقط موقع باز شدن پاپ‌آپ همان قله لود می‌شود؛ هر مسیر هم فقط با کلیک.
 import L from 'leaflet';
+import { flashCopied } from '../util';
 
 interface TrackMeta {
   n: string;       // عنوان
@@ -17,17 +18,15 @@ interface TrackMeta {
   src?: string;    // لینک صفحه‌ی اصلی مسیر (برای garmin وجود ندارد)
 }
 
-interface TrackIndex {
-  peaks: Record<string, string[]>;      // oid قله → شناسه‌ی مسیرها
-  tracks: Record<string, TrackMeta>;
-}
-
 type TrackPoint = [number, number, number?]; // [lat, lng, ele?]
 
 interface TrackFile {
   s?: TrackPoint[][];  // تکه‌های مسیر؛ بین دو تکه (وقفه‌ی ضبط) خطی رسم نمی‌شود
   p?: TrackPoint[];    // فرمت قدیمی (یک تکه)
 }
+
+/** متادیتای مسیرهای یک قله: [[شناسه، متادیتا]، …] (public/tracks/meta/<oid>.json) */
+type PeakTracksMeta = Array<[string, TrackMeta]>;
 
 /** تکه‌های مسیر؛ فایل‌های قدیمی فقط p دارند */
 const segmentsOf = (data: TrackFile): TrackPoint[][] => data.s ?? (data.p ? [data.p] : []);
@@ -39,14 +38,35 @@ const WIDE_MAP_PX = 600; // در نقشه‌ی عریض، جزئیات مسیر 
 
 let tracksLayer: L.LayerGroup | null = null;
 let mapRef: L.Map | null = null;
-let indexPromise: Promise<TrackIndex | null> | null = null;
 let legendEl: HTMLElement | null = null;
 let expandedId: string | null = null;
 
+const metaCache = new Map<string, PeakTracksMeta | null>(); // متادیتای per-قله (null = قله مسیری ندارد)
 const dataCache = new Map<string, TrackFile>();    // داده‌ی خام مسیرها
 const shapes = new Map<string, L.FeatureGroup>();  // کش لایه‌های Leaflet
 const visible = new Set<string>();                 // مسیرهای نمایش‌داده‌شده
 const metas = new Map<string, TrackMeta>();        // متادیتای مسیرهای نمایش‌داده‌شده
+const peakTitles = new Map<string, string>();      // عنوان قله‌ی هر مسیر (برای لینک اشتراک‌گذاری)
+
+// مسیری که از روی لینک اشتراک‌گذاری (?track=<عنوان مسیر>) باید باز شود؛ تا اولین
+// قله‌ای که مسیرش رندر شود نگه داشته می‌شود.
+let pendingTrack: string | null = null;
+
+/** همسان‌سازی سبک برای مقایسه‌ی عنوان‌ها (فاصله‌ها، ی/ك عربی، نیم‌فاصله) */
+const normTitle = (s: string): string =>
+  s
+    .normalize('NFKC')
+    .replace(/[يى]/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u200e]/g, ' ')
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** تعیین مسیر مقصد از لینک اشتراک‌گذاری (?track=…) */
+export function setPendingTrack(title: string | null): void {
+  pendingTrack = title ? normTitle(title) : null;
+}
 
 // ───────────────────────── کمکی‌ها ─────────────────────────
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -98,15 +118,25 @@ function sourceLink(src: string | undefined, className: string): HTMLAnchorEleme
 }
 
 // ───────────────────────── داده و لایه‌ها ─────────────────────────
-function loadIndex(): Promise<TrackIndex | null> {
-  indexPromise ??= fetch(`${BASE}tracks/index.json`)
-    .then((r) => (r.ok ? (r.json() as Promise<TrackIndex>) : null))
-    .catch(() => null)
-    .then((idx) => {
-      if (!idx) indexPromise = null; // بار بعد دوباره تلاش کند (مثلاً آفلاین بوده)
-      return idx;
-    });
-  return indexPromise;
+/**
+ * متادیتای مسیرهای یک قله؛ فایل کوچکی است که فقط موقع باز شدن پاپ‌آپِ همان قله دانلود
+ * می‌شود (قبلاً یک index.json سراسری ~۴۰۰KB برای همه لود می‌شد). قلهٔ بی‌مسیر null
+ * برمی‌گرداند و برای همهٔ جلسه در حافظه می‌ماند تا دوباره درخواست نشود.
+ */
+async function loadPeakMeta(oid: number): Promise<PeakTracksMeta | null> {
+  const key = String(oid);
+  const cached = metaCache.get(key);
+  if (cached !== undefined) return cached;
+
+  let meta: PeakTracksMeta | null = null;
+  try {
+    const res = await fetch(`${BASE}tracks/meta/${key}.json`);
+    if (res.ok) meta = (await res.json()) as PeakTracksMeta;
+  } catch {
+    // آفلاین و بدون کش → مثل «بدون مسیر» رفتار می‌شود
+  }
+  metaCache.set(key, meta);
+  return meta;
 }
 
 async function getData(id: string): Promise<TrackFile> {
@@ -126,12 +156,17 @@ async function getShape(id: string, title: string): Promise<L.FeatureGroup> {
   const data = await getData(id);
   // آرایه‌ی تو در تو = چند خط جدا (بدون خط واصل بین تکه‌ها)
   const latlngs = segmentsOf(data).map((seg) => seg.map(([lat, lng]) => [lat, lng] as L.LatLngTuple));
-  const shape = L.featureGroup([
+  const layers: L.Layer[] = [
     // حاشیه‌ی سفید تا مسیر روی هر زمینه‌ای دیده شود
     L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.85, interactive: false }),
     L.polyline(latlngs, { color: colorOf(id), weight: 4, opacity: 0.95 }).bindTooltip(title, { sticky: true }),
-    L.circleMarker(latlngs[0][0], { radius: 5, color: '#ffffff', weight: 2, fillColor: '#16a34a', fillOpacity: 1, interactive: false }),
-  ]);
+  ];
+  // نقطهٔ شروع مسیر (سبز)
+  const start = latlngs[0]?.[0];
+  if (start) {
+    layers.push(L.circleMarker(start, { radius: 5, color: '#ffffff', weight: 2, fillColor: '#16a34a', fillOpacity: 1, interactive: false }));
+  }
+  const shape = L.featureGroup(layers);
   shapes.set(id, shape);
   return shape;
 }
@@ -210,6 +245,18 @@ function downloadButton(className: string, id: string, meta: TrackMeta): HTMLBut
   });
   return btn;
 }
+
+/** دکمهٔ کپی لینک اشتراک‌گذاری یک مسیر خاص: ?q=<نام قله>&track=<عنوان مسیر> */
+function shareTrackButton(className: string, meta: TrackMeta, peakTitle: string): HTMLButtonElement {
+  const btn = el('button', className, 'کپی لینک');
+  btn.type = 'button';
+  btn.title = 'کپی لینک این مسیر';
+  btn.dataset.sharePeak = peakTitle;
+  btn.dataset.shareTrack = meta.n;
+  btn.addEventListener('click', () => flashCopied(btn, 'کپی لینک این مسیر'));
+  return btn;
+}
+
 
 // ───────────────────────── نمودار ارتفاعی ─────────────────────────
 function profileSvg(data: TrackFile, color: string): SVGSVGElement | null {
@@ -307,6 +354,7 @@ function cardBody(id: string, meta: TrackMeta): HTMLElement {
 
   const actions = el('div', 'track-card__actions');
   actions.append(downloadButton('track-act track-act--primary', id, meta));
+  actions.append(shareTrackButton('track-act', meta, peakTitles.get(id) ?? ''));
   const src = sourceLink(meta.src, 'track-act');
   if (src) actions.append(src);
   const zoom = el('button', 'track-act', 'نمایش کامل مسیر');
@@ -416,20 +464,22 @@ async function toggleTrack(id: string, meta: TrackMeta): Promise<boolean> {
 
 // ───────────────────────── لیست داخل پاپ‌آپ قله ─────────────────────────
 /** بخش «مسیرهای صعود» را داخل پاپ‌آپ یک قله می‌سازد (اگر قله مسیری نداشت هیچ‌چیز اضافه نمی‌شود). */
-export async function renderPeakTracks(slot: HTMLElement, oid: number, onResize: () => void): Promise<void> {
-  const index = await loadIndex();
-  const ids = index?.peaks[String(oid)];
-  if (!index || !ids?.length) return;
+export async function renderPeakTracks(
+  slot: HTMLElement,
+  oid: number,
+  peakTitle: string,
+  onResize: () => void,
+): Promise<void> {
+  const peakTracks = await loadPeakMeta(oid);
+  if (!peakTracks?.length) return;
 
   const box = el('div', 'peak-tracks');
-  box.append(el('div', 'peak-tracks__title', `مسیرهای صعود (${ids.length})`));
+  box.append(el('div', 'peak-tracks__title', `مسیرهای صعود (${peakTracks.length})`));
   const list = el('div', 'peak-tracks__list');
   box.append(list);
 
-  for (const id of ids) {
-    const meta = index.tracks[id];
-    if (!meta) continue;
-
+  for (const [id, meta] of peakTracks) {
+    peakTitles.set(id, peakTitle);
     const btn = el('button', 'peak-track');
     btn.type = 'button';
     btn.dataset.id = id;
@@ -459,6 +509,7 @@ export async function renderPeakTracks(slot: HTMLElement, oid: number, onResize:
     // دانلود GPX برای همه‌ی مسیرها؛ لینک منبع فقط اگر وجود داشته باشد (garmin ندارد)
     const actions = el('div', 'peak-track__actions');
     actions.append(downloadButton('peak-track__act', id, meta));
+    actions.append(shareTrackButton('peak-track__act', meta, peakTitle));
     const src = sourceLink(meta.src, 'peak-track__act');
     if (src) actions.append(src);
     list.append(actions);
@@ -466,4 +517,20 @@ export async function renderPeakTracks(slot: HTMLElement, oid: number, onResize:
 
   slot.replaceChildren(box);
   onResize();
+
+  // اگر کاربر با لینک اشتراک‌گذاری (?track=…) آمده، مسیر هم‌نام را خودکار روی نقشه بیاور
+  if (pendingTrack) {
+    const wanted = peakTracks.find(([, m]) => normTitle(m.n) === pendingTrack);
+    if (wanted) {
+      const [id, meta] = wanted;
+      pendingTrack = null; // فقط یک‌بار
+      const btn = list.querySelector<HTMLButtonElement>(`.peak-track[data-id="${CSS.escape(id)}"]`);
+      if (btn) btn.classList.add('is-on');
+      try {
+        await toggleTrack(id, meta); // خودش پاپ‌آپ را می‌بندد و روی مسیر زوم می‌کند
+      } catch {
+        btn?.classList.add('is-error');
+      }
+    }
+  }
 }

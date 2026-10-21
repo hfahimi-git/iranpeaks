@@ -1,7 +1,38 @@
-import { initMap, loadPeaks, loadPeaksByState, clearMap } from './map/map';
-import { searchPeaks, searchStates } from './db/queries';
+import { searchPeaks, searchStates, type Peak } from './db/queries';
+import { esc, setUrlParam } from './util';
 
-initMap('map');
+// ======================
+// نقشه (لیفلت) با تاخیر
+// ماژول نقشه و لیفلت فقط موقع لازم دانلود می‌شوند: اولین بار که نقشه به چشم می‌آید
+// یا کاربر جستجو می‌کند. اینطوری باز شدن صفحه (FCP/TTI) سریع‌تر می‌شود.
+// ======================
+type MapModule = typeof import('./map/map');
+
+let mapModule: Promise<MapModule> | null = null;
+
+function ensureMap(): Promise<MapModule> {
+  mapModule ??= import('./map/map').then((m) => {
+    m.initMap('map');
+    return m;
+  });
+  return mapModule;
+}
+
+const mapEl = document.getElementById('map');
+if (mapEl && 'IntersectionObserver' in window) {
+  const io = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        io.disconnect();
+        void ensureMap();
+      }
+    },
+    { rootMargin: '200px' },
+  );
+  io.observe(mapEl);
+} else {
+  void ensureMap();
+}
 
 const searchInput = document.getElementById('searchInput') as HTMLInputElement;
 const searchBtn = document.getElementById('searchBtn') as HTMLButtonElement;
@@ -21,10 +52,11 @@ async function doSearch() {
   const query = searchInput.value.trim();
   hideSuggestions();
   selectedIndex = -1;
-  await loadPeaks(query);
+  setUrlParam('q', query || null); // لینک نتایج جستجو قابل اشتراک می‌شود (?q=…)
+  const map = await ensureMap();
+  await map.loadPeaks(query);
 }
-
-searchBtn.addEventListener('click', doSearch);
+searchBtn.addEventListener('click', () => void doSearch());
 
 searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
@@ -32,7 +64,7 @@ searchInput.addEventListener('keydown', (e) => {
     if (selectedIndex >= 0 && currentSuggestions[selectedIndex]) {
       selectSuggestion(currentSuggestions[selectedIndex]);
     } else {
-      doSearch();
+      void doSearch();
     }
     return;
   }
@@ -74,9 +106,11 @@ searchInput.addEventListener('input', () => {
 clearBtn.addEventListener('click', () => {
   searchInput.value = '';
   updateClearButton();
-  clearMap();
+  setUrlParam('q', null);
+  setUrlParam('track', null);
+  // اگر نقشه هنوز دانلود نشده، چیزی برای پاک کردن وجود ندارد — لازم نیست بارش کنیم
+  void mapModule?.then((m) => m.clearMap());
   hideSuggestions();
-  selectedIndex = -1;
   searchInput.focus();
 });
 
@@ -98,6 +132,7 @@ async function handleAutocomplete() {
     return;
   }
 
+  // جستجو روی آرایه در حافظه است؛ ۲۵۰ms کافی نیست صبر کنیم
   debounceTimer = window.setTimeout(async () => {
     const [peaks, states] = await Promise.all([
       searchPeaks(query),
@@ -111,19 +146,19 @@ async function handleAutocomplete() {
       currentSuggestions.push({
         type: 'state',
         value: state,
-        label: `استان: ${state}`
+        label: `استان: ${esc(state)}`
       });
     });
 
     // بعد قله‌ها
-    peaks.slice(0, 8).forEach((peak: any) => {
+    peaks.slice(0, 8).forEach((peak: Peak) => {
       const name = peak.name || peak.ename || 'بدون نام';
       const height = peak.height ? ` — ${peak.height} متر` : '';
       const locations = peak.locations ? ` / ${peak.locations}` : '';
       currentSuggestions.push({
         type: 'peak',
         value: name,
-        label: `<strong>${name}</strong><span style="color:#64748b">${height}</span><span style="color:#64748b">${locations}</span>`
+        label: `<strong>${esc(name)}</strong><span style="color:#64748b">${esc(height)}</span><span style="color:#64748b">${esc(locations)}</span>`
       });
     });
 
@@ -135,7 +170,7 @@ async function handleAutocomplete() {
 
     renderSuggestions();
     selectedIndex = -1;
-  }, 250);
+  }, 150);
 }
 
 function renderSuggestions() {
@@ -177,11 +212,13 @@ async function selectSuggestion(item: { type: 'peak' | 'state'; value: string; l
   updateClearButton();
   hideSuggestions();
   selectedIndex = -1;
+  setUrlParam('q', item.value);
 
+  const map = await ensureMap();
   if (item.type === 'state') {
-    await loadPeaksByState(item.value);
+    await map.loadPeaksByState(item.value);
   } else {
-    await loadPeaks(item.value);
+    await map.loadPeaks(item.value);
   }
 }
 
@@ -208,4 +245,24 @@ document.addEventListener('click', (e) => {
 const yearEl = document.getElementById('current-year');
 if (yearEl) {
   yearEl.textContent = new Date().getFullYear().toString();
+}
+
+// ======================
+// لینک‌های اشتراک‌گذاری‌شده
+// ?q=<نام قله یا استان> → همان جستجو اجرا می‌شود؛ اگر نتیجه یکتا باشد پاپ‌آپش باز می‌شود
+// ?track=<عنوان مسیر> → مسیر هم‌نام همان قله هم خودکار روی نقشه می‌آید
+// (شناسهٔ دیتابیس در URL نمی‌آید تا کسی نتواند با شمردن idها همهٔ قله‌ها را جمع کند)
+// ======================
+const initialParams = new URLSearchParams(window.location.search);
+const initialQuery = (initialParams.get('q') ?? '').trim();
+const initialTrack = (initialParams.get('track') ?? '').trim();
+
+if (initialQuery) {
+  searchInput.value = initialQuery;
+  updateClearButton();
+  void (async () => {
+    const map = await ensureMap();
+    if (initialTrack) map.queueTrackFromUrl(initialTrack);
+    await map.loadPeaks(initialQuery);
+  })();
 }

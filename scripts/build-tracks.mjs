@@ -8,8 +8,8 @@
  *         npm run tracks -- D:\gpx  (پوشه‌ی دلخواه)
  *
  * خروجی‌ها:
- *   public/tracks/<id>.json    مسیر ساده‌شده (فقط ترک‌هایی که به قله وصل شدند)
- *   public/tracks/index.json   فهرست: کدام قله چه مسیرهایی دارد + متادیتا
+ *   public/tracks/<id>.json       مسیر ساده‌شده (فقط ترک‌هایی که به قله وصل شدند)
+ *   public/tracks/meta/<oid>.json متادیتای مسیرهای هر قله (فایل کوچک؛ موقع باز شدن پاپ‌آپ لود می‌شود)
  *   reports/tracks-review.csv  موارد مشکوک برای بررسی دستی
  *   reports/new-peaks.csv      قله‌هایی که در دیتابیس نیستند (نام + lat/lng + ارتفاع)
  *
@@ -17,18 +17,19 @@
  *   { "نام-فایل.gpx": [1904, 1905], "id-هشت-حرفی": [] }
  *   (آرایه‌ی خالی = این ترک به هیچ قله‌ای وصل نشود)
  *
- * هیچ وابستگی جدیدی لازم نیست؛ دیتابیس با sql.js (که از قبل در پروژه هست) خوانده می‌شود.
+ * هیچ وابستگی جدیدی لازم نیست؛ داده‌ها از public/data/peaks.json خوانده می‌شوند
+ * (خروجیِ npm run peaks که data/peaks.db را به JSON تبدیل می‌کند).
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import initSqlJs from 'sql.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GPX_DIR = resolve(process.argv[2] ?? join(ROOT, 'gpx'));
-const DB_FILE = join(ROOT, 'public/data/peaks.db');
+const PEAKS_JSON = join(ROOT, 'public/data/peaks.json');
 const OUT_DIR = join(ROOT, 'public/tracks');
+const META_DIR = join(OUT_DIR, 'meta');
 const REPORT_DIR = join(ROOT, 'reports');
 const OVERRIDES_FILE = join(ROOT, 'scripts/track-overrides.json');
 
@@ -147,11 +148,6 @@ function norm(s) {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
-}
-
-function titleHasName(normTitle, name) {
-  const n = norm(name ?? '');
-  return n.length >= 2 && ` ${normTitle} `.includes(` ${n} `);
 }
 
 function suggestName(title) {
@@ -310,12 +306,73 @@ if (!existsSync(GPX_DIR)) {
   process.exit(1);
 }
 
-const SQL = await initSqlJs();
-const sdb = new SQL.Database(readFileSync(DB_FILE));
-const peaks = (sdb.exec('SELECT oid, name, ename, height, lat, lng FROM peak WHERE lat IS NOT NULL AND lng IS NOT NULL')[0]?.values ?? [])
-  .map(([oid, name, ename, height, lat, lng]) => ({ oid, name: name ?? '', ename: ename ?? '', height, lat, lng }));
+if (!existsSync(PEAKS_JSON)) {
+  console.error(`peaks.json پیدا نشد: ${PEAKS_JSON}\nاول «npm run peaks» را بزن تا data/peaks.db به JSON تبدیل شود.`);
+  process.exit(1);
+}
+
+// [oid, name, ename, height, lat, lng, …] — ترتیب ستون‌ها در scripts/build-peaks.mjs ثبت شده
+const peaks = JSON.parse(readFileSync(PEAKS_JSON, 'utf8'))
+  .map(([oid, name, ename, height, lat, lng]) => ({ oid, name: name ?? '', ename: ename ?? '', height, lat, lng }))
+  .filter((p) => p.lat != null && p.lng != null);
+
+peaks.forEach((p, i) => {
+  p.i = i;
+  // نام‌های نرمال‌شده یک‌بار ساخته می‌شوند؛ قبلاً برای هر جفت (مسیر × قله) دوباره norm می‌شد
+  // (ده‌ها میلیون بار normalize روی کل مجموعه — سنگین‌ترین بخش قدیمیِ build)
+  p.nnames = [norm(p.name), norm(p.name.split(/\s+[-–]\s+/)[0]), norm(p.ename)].filter((n) => n.length >= 2);
+});
 const peakByOid = new Map(peaks.map((p) => [p.oid, p]));
-sdb.close();
+
+// ───────────────────────── شبکهٔ مکانی قله‌ها ─────────────────────────
+// پیدا کردن قله‌های نزدیک بدون اسکن کل دیتابیس؛ نتیجه دقیقاً مثل اسکن کامل است
+const CELL = 0.02; // ≈ ۲ کیلومتر
+const cellKey = (lat, lng) => `${Math.floor(lat / CELL)}:${Math.floor(lng / CELL)}`;
+const grid = new Map();
+for (const p of peaks) {
+  const k = cellKey(p.lat, p.lng);
+  let bucket = grid.get(k);
+  if (!bucket) grid.set(k, (bucket = []));
+  bucket.push(p);
+}
+
+/** قله‌های داخل جعبهٔ [minLat, maxLat, minLng, maxLng]؛ ترتیب اصلی دیتابیس را نگه می‌دارد */
+function peaksInBox(box) {
+  const out = [];
+  const la0 = Math.floor(box[0] / CELL), la1 = Math.floor(box[1] / CELL);
+  const lo0 = Math.floor(box[2] / CELL), lo1 = Math.floor(box[3] / CELL);
+  for (let la = la0; la <= la1; la++) {
+    for (let lo = lo0; lo <= lo1; lo++) {
+      const bucket = grid.get(`${la}:${lo}`);
+      if (bucket) out.push(...bucket);
+    }
+  }
+  out.sort((a, b) => a.i - b.i);
+  return out;
+}
+
+/** نزدیک‌ترین قله به نقطه؛ با حلقه‌های پیاپی شبکه و کران پایین قطعی (بزرگ‌نمایی‌شده) */
+function nearestPeak(lat, lng) {
+  const cLat = Math.floor(lat / CELL), cLng = Math.floor(lng / CELL);
+  let best = { d: Infinity, p: null };
+  for (let ring = 0; ring <= 2000; ring++) {
+    // کوچک‌ترین فاصلهٔ ممکنِ خانه‌های این حلقه؛ اگر از بهترین فعلی بزرگ‌تر شد، جایی نمانده
+    if ((ring - 1) * CELL * 111320 > best.d) break;
+    for (let la = cLat - ring; la <= cLat + ring; la++) {
+      for (let lo = cLng - ring; lo <= cLng + ring; lo++) {
+        if (Math.max(Math.abs(la - cLat), Math.abs(lo - cLng)) !== ring) continue; // فقط خانه‌های همین حلقه
+        const bucket = grid.get(`${la}:${lo}`);
+        if (!bucket) continue;
+        for (const p of bucket) {
+          const d = haversine(lat, lng, p.lat, p.lng);
+          // تساوی فاصله → قله‌ای با شاخص کوچک‌تر (ترتیب اصلی) برنده می‌شود تا خروجی قطعی بماند
+          if (d < best.d || (d === best.d && best.p && p.i < best.p.i)) best = { d, p };
+        }
+      }
+    }
+  }
+  return best;
+}
 
 const overrides = existsSync(OVERRIDES_FILE) ? JSON.parse(readFileSync(OVERRIDES_FILE, 'utf8')) : {};
 
@@ -376,7 +433,7 @@ for (const file of files) {
   const pad = 0.003;
   const lats = pts.map((p) => p.lat), lngs = pts.map((p) => p.lng);
   const box = [Math.min(...lats) - pad, Math.max(...lats) + pad, Math.min(...lngs) - pad, Math.max(...lngs) + pad];
-  for (const peak of peaks) {
+  for (const peak of peaksInBox(box)) {
     if (peak.lat < box[0] || peak.lat > box[1] || peak.lng < box[2] || peak.lng > box[3]) continue;
     const { d, ele } = nearestOnTrack(peak, segs);
     if (d > CFG.matchDistM) continue;
@@ -388,10 +445,9 @@ for (const file of files) {
 
   // ── سطح B: اسم یک قله‌ی موجود در عنوان ترک هست، ولی هندسه به‌تنهایی قطعی نیست → بررسی دستی
   if (t.A.length === 0 && t.max != null) {
-    const nt = norm(title);
+    const nt = ` ${norm(title)} `;
     for (const peak of peaks) {
-      const names = [peak.name, peak.name.split(/\s+[-–]\s+/)[0], peak.ename];
-      if (!names.some((n) => titleHasName(nt, n))) continue;
+      if (!peak.nnames.some((n) => nt.includes(` ${n} `))) continue;
       const d = haversine(top.lat, top.lng, peak.lat, peak.lng);
       if (d > CFG.reviewTopDistM) continue;
       const dh = peak.height == null ? null : Math.abs(peak.height - top.ele);
@@ -418,9 +474,12 @@ for (const file of files) {
 
 // ───────────── خروجی مسیرها ─────────────
 mkdirSync(OUT_DIR, { recursive: true });
-for (const f of readdirSync(OUT_DIR)) if (/^([0-9a-f]{8}|index)\.json$/.test(f)) rmSync(join(OUT_DIR, f));
+for (const f of readdirSync(OUT_DIR)) if (/^[0-9a-f]{8}\.json$/.test(f)) rmSync(join(OUT_DIR, f));
+rmSync(join(OUT_DIR, 'index.json'), { force: true }); // فرمت قدیمی (یک فایل سراسری ~۴۰۰KB)؛ جایگزین: meta/<oid>.json
+rmSync(META_DIR, { recursive: true, force: true });
+mkdirSync(META_DIR, { recursive: true });
 
-const index = { v: 1, peaks: {}, tracks: {} };
+const metaByPeak = new Map(); // oid قله → [[شناسه‌ی مسیر، متادیتا]، …]
 let totalBytes = 0;
 for (const t of tracks.filter((x) => x.A.length)) {
   const out = t.segs.map((seg) =>
@@ -434,7 +493,7 @@ for (const t of tracks.filter((x) => x.A.length)) {
   writeFileSync(join(OUT_DIR, `${t.id}.json`), body);
   totalBytes += Buffer.byteLength(body);
 
-  index.tracks[t.id] = {
+  const meta = {
     n: t.title,
     km: Number(t.km.toFixed(1)),
     up: t.up,
@@ -447,19 +506,27 @@ for (const t of tracks.filter((x) => x.A.length)) {
     ...(t.by && { by: t.by }),
     ...(t.src && { src: t.src }),
   };
-  for (const oid of t.A) (index.peaks[oid] ??= []).push(t.id);
+  for (const oid of t.A) {
+    let list = metaByPeak.get(oid);
+    if (!list) metaByPeak.set(oid, (list = []));
+    list.push([t.id, meta]);
+  }
 }
-for (const ids of Object.values(index.peaks)) ids.sort((a, b) => index.tracks[a].n.localeCompare(index.tracks[b].n, 'fa'));
-writeFileSync(join(OUT_DIR, 'index.json'), JSON.stringify(index));
+let metaFiles = 0;
+let totalMetaBytes = 0;
+for (const [oid, list] of metaByPeak) {
+  list.sort((a, b) => a[1].n.localeCompare(b[1].n, 'fa')); // مرتب‌سازی بر اساس عنوان، مثل قبل
+  const body = JSON.stringify(list);
+  writeFileSync(join(META_DIR, `${oid}.json`), body);
+  totalMetaBytes += Buffer.byteLength(body);
+  metaFiles++;
+}
 
 // ───────────── قله‌های جدید (در دیتابیس نیستند) ─────────────
 const candidates = tracks
   .filter((t) => t.status === 'unmatched' && !t.reviewed)
   .map((t) => {
-    const near = peaks.reduce((b, p) => {
-      const d = haversine(t.top.lat, t.top.lng, p.lat, p.lng);
-      return d < b.d ? { d, p } : b;
-    }, { d: Infinity, p: null });
+    const near = nearestPeak(t.top.lat, t.top.lng);
     return { t, near };
   })
   .sort((a, b) => (b.t.max ?? 0) - (a.t.max ?? 0));
@@ -498,7 +565,7 @@ console.log(`
   کنار گذاشته    : ${n('excluded')}
   بدون قله       : ${n('unmatched')}  → ${clusters.length} کاندیدای قله‌ی جدید (بقیه در فایل بررسی)
 نیازمند بررسی   : ${reviewRows.length - 1} ردیف در reports/tracks-review.csv
-حجم خروجی       : ${(totalBytes / 1024).toFixed(1)} KB  (${Object.keys(index.tracks).length} فایل مسیر)
+حجم خروجی       : ${(totalBytes / 1024).toFixed(1)} KB مسیرها + ${(totalMetaBytes / 1024).toFixed(1)} KB متادیتا (${metaFiles} فایل meta)
 `);
 for (const d of dupes) console.log('  تکراری:', d);
 const duped = tracks.filter((t) => t.dropped > 0);
