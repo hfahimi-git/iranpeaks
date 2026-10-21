@@ -257,6 +257,29 @@ const initialParams = new URLSearchParams(window.location.search);
 const initialQuery = (initialParams.get('q') ?? '').trim();
 const initialTrack = (initialParams.get('track') ?? '').trim();
 
+// آپدیت متا برای پیش‌نمایش لینک در تلگرام/واتساپ/...
+function updateShareMeta() {
+  if (!initialQuery) return;
+  const title = initialTrack
+    ? `مسیر «${initialTrack}» در قله «${initialQuery}» | iranpeaks.ir`
+    : `قله «${initialQuery}» | نقشه قلل ایران — iranpeaks.ir`;
+  const desc = initialTrack
+    ? `مسیر صعود «${initialTrack}» به قله «${initialQuery}» با نقشه، پروفایل ارتفاعی و دانلود GPX در iranpeaks.ir`
+    : `قله «${initialQuery}» روی نقشه قلل ایران — موقعیت، مسیرهای صعود، نمودار ارتفاعی و دانلود GPX`;
+  document.title = title;
+  const set = (sel: string, attr: string, val: string) => {
+    const el = document.querySelector(sel);
+    if (el) el.setAttribute(attr, val);
+  };
+  set('meta[name="description"]', 'content', desc);
+  set('meta[property="og:title"]', 'content', title);
+  set('meta[property="og:description"]', 'content', desc);
+  set('meta[property="og:url"]', 'content', window.location.href);
+  set('meta[name="twitter:title"]', 'content', title);
+  set('meta[name="twitter:description"]', 'content', desc);
+}
+updateShareMeta();
+
 if (initialQuery) {
   searchInput.value = initialQuery;
   updateClearButton();

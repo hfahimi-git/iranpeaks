@@ -2,7 +2,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { searchPeaks, getPeaksByState, type Peak } from '../db/queries';
-import { initTracks, clearTracks, renderPeakTracks, setPendingTrack } from './tracks';
+import { initTracks, clearTracks, renderPeakTracks, setPendingTrack, loadPeakMeta } from './tracks';
 import { esc, flashCopied } from '../util';
 
 
@@ -55,10 +55,47 @@ export async function loadPeaks(query: string) {
   const peaks = await searchPeaks(query.trim());
   const markers = renderPeaksOnMap(peaks);
 
+  // اگر لینک track داره و نتیجه بیشتر از یک قله است، باید قله‌ای که این مسیر توش هست رو پیدا و باز کنیم
+  const trackTitle = new URLSearchParams(window.location.search).get('track')?.trim() || null;
+  if (trackTitle && peaks.length > 1) {
+    const wanted = trackTitle
+      .normalize('NFKC')
+      .replace(/[يى]/g, 'ی')
+      .replace(/ك/g, 'ک')
+      .replace(/[\u200c\u200f\u200e]/g, ' ')
+      .replace(/[\u064B-\u065F\u0670]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    // متای هر قله رو چک می‌کنیم تا ببینیم کدومش این track رو داره
+    for (let i = 0; i < peaks.length; i++) {
+      try {
+        const meta = await loadPeakMeta(peaks[i].oid);
+        if (!meta) continue;
+        const found = meta.some(([, m]) => {
+          const n = String(m.n || '')
+            .normalize('NFKC')
+            .replace(/[يى]/g, 'ی')
+            .replace(/ك/g, 'ک')
+            .replace(/[\u200c\u200f\u200e]/g, ' ')
+            .replace(/[\u064B-\u065F\u0670]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+          return n === wanted || n.includes(wanted) || wanted.includes(n);
+        });
+        if (found) {
+          setPendingTrack(trackTitle);
+          markers[i].openPopup();
+          break;
+        }
+      } catch {}
+    }
+    return;
+  }
+
   // اگر جستجو فقط یک نتیجه داشت، همان رفتار «باز شدن پاپ‌آپ قله» را اجرا کن
-  // (لینک‌های اشتراک‌گذاری هم بر همین اساس کار می‌کنند: ?q=<نام قله>).
-  // مهم: همین‌جا و بدون تأخیر؛ اگر به بعد موکول شود، بستنِ ناهمگامِ پاپ‌آپِ
-  // مارکرِ پاک‌شده آن را دوباره می‌بندد.
   if (markers.length === 1) {
     markers[0].openPopup();
   }

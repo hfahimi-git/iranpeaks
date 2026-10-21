@@ -123,7 +123,7 @@ function sourceLink(src: string | undefined, className: string): HTMLAnchorEleme
  * می‌شود (قبلاً یک index.json سراسری ~۴۰۰KB برای همه لود می‌شد). قلهٔ بی‌مسیر null
  * برمی‌گرداند و برای همهٔ جلسه در حافظه می‌ماند تا دوباره درخواست نشود.
  */
-async function loadPeakMeta(oid: number): Promise<PeakTracksMeta | null> {
+export async function loadPeakMeta(oid: number): Promise<PeakTracksMeta | null> {
   const key = String(oid);
   const cached = metaCache.get(key);
   if (cached !== undefined) return cached;
