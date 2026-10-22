@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: 'autoUpdate',          // آپدیت خودکار
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
-        name: 'نقشه قلل ایران',
-        short_name: 'قلل ایران',
+        name: 'نقشه قله‌های ایران',
+        short_name: 'قله‌های ایران',
         description: 'جستجو و نمایش قله‌های ایران روی نقشه',
         theme_color: '#2563eb',
         background_color: '#ffffff',
