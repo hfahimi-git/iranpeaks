@@ -2,14 +2,78 @@
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/x+icon" href="/favicon.ico" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>iranpeaks.ir | قلل ایران</title>
+    <title>نقشه قلل ایران | جستجو، مسیر صعود و دانلود GPX — iranpeaks.ir</title>
+    <link rel="canonical" href="https://iranpeaks.ir/" />
+    <!-- نسخهٔ بیلد؛ موقع بیلد با تگ app-version جایگزین می‌شود (تشخیص آپدیت در src/pwa.ts) -->
 
-    <!-- فونت فارسی زیبا -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- فونت فارسی؛ هاست‌شده داخل خود سایت (فونت گوگل برای کاربران ایرانی کند/قطع است) -->
+    <link rel="preload" href="/fonts/Vazirmatn-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="apple-touch-icon" href="/pwa-192x192.png" />
+    <meta name="theme-color" content="#2563eb" />
+
+    <!-- سئو -->
+    <meta
+      name="description"
+      content="نقشه و جستجوی بیش از ۲۰۰۰ قلهٔ ایران؛ مسیرهای صعود و دانلود GPX، نمودار ارتفاعی، هواشناسی و لینک اشتراک‌گذاری هر قله — از دماوند و علم‌کوه تا سبلان و تفتان."
+    />
+    <meta property="og:site_name" content="iranpeaks.ir" />
+    <meta property="og:locale" content="fa_IR" />
+    <meta property="og:title" content="نقشه قلل ایران | جستجو، مسیر صعود و دانلود GPX" />
+    <meta
+      property="og:description"
+      content="جستجو و نمایش قله‌های ایران روی نقشه؛ مسیرهای صعود، نمودار ارتفاعی و دانلود GPX برای بیش از ۲۰۰۰ قله."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://iranpeaks.ir/" />
+    <meta property="og:image" content="https://iranpeaks.ir/pwa-512x512.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="نقشه قلل ایران — iranpeaks.ir" />
+    <meta
+      name="twitter:description"
+      content="نقشه و جستجوی قله‌های ایران با مسیرهای صعود، نمودار ارتفاعی و دانلود GPX."
+    />
+
+    <!-- داده‌های ساخت‌یافته برای موتورهای جستجو و دستیارهای هوش مصنوعی -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://iranpeaks.ir/#website",
+            "url": "https://iranpeaks.ir/",
+            "name": "iranpeaks.ir | قله‌های ایران",
+            "alternateName": "نقشه قله‌های ایران",
+            "description": "نقشه و جستجوی قله‌های ایران با مسیرهای صعود، نمودار ارتفاعی و دانلود GPX",
+            "inLanguage": "fa-IR",
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": "https://iranpeaks.ir/?q={search_term_string}"
+              },
+              "query-input": "required name=search_term_string"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://iranpeaks.ir/#app",
+            "url": "https://iranpeaks.ir/",
+            "name": "نقشه قلل ایران",
+            "applicationCategory": "TravelApplication",
+            "operatingSystem": "Web",
+            "browserRequirements": "JavaScript",
+            "inLanguage": "fa-IR",
+            "isAccessibleForFree": true,
+            "description": "جستجو و نمایش بیش از ۲۰۰۰ قلهٔ ایران روی نقشه، همراه با مسیرهای صعود GPX، نمودار ارتفاعی و لینک هواشناسی.",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "creator": { "@type": "Organization", "name": "iranpeaks.ir", "url": "https://iranpeaks.ir/" }
+          }
+        ]
+      }
+    </script>
   </head>
 
   <body>
@@ -17,33 +81,34 @@
       <!-- هدر -->
       <header class="header">
         <div class="container header-content">
-          <div class="logo">
-            <span class="logo-text">iranpeaks.ir</span>
-          </div>
+          <a class="logo" href="/" aria-label="iranpeaks.ir — صفحهٔ اصلی">
+<!--            <img class="logo-icon" src="/logo.svg" width="40" height="40" alt="" aria-hidden="true" />-->
+            <span class="logo-text">iran<span style="color: #11c156">peaks</span>.ir</span>
+          </a>
           <p class="tagline">جستجو در بیش از ۲۰۰۰ قله ایران</p>
-	  </div>
+        </div>
       </header>
 
-		<!-- بخش جستجو -->
-		<section class="search-section">
-		  <div class="container">
-			<div class="search-wrap">
-  <div class="search-box">
-  			  <input
-  				type="text"
-  				id="searchInput"
-  				placeholder="نام قله یا استان را بنویسید (مثلاً دماوند، علم‌کوه، البرز...)"
-  				autocomplete="off"
-  			  />
-  			  <button id="clearBtn" class="clear-btn" title="پاک کردن" style="display: none;">✕</button>
-  			  <button id="searchBtn">جستجو</button>
-  			</div>
-  			<div id="suggestions" class="suggestions"></div>
-</div>
-			<p class="search-hint">                جستجو بر اساس نام فارسی یا انگلیسی قله
-            </p>
-		  </div>
-		</section>
+      <main>
+        <!-- بخش جستجو -->
+      <section class="search-section">
+        <div class="container">
+          <div class="search-wrap">
+            <div class="search-box">
+              <input
+                type="text"
+                id="searchInput"
+                placeholder="نام قله یا استان را بنویسید (مثلاً دماوند، علم‌کوه، البرز...)"
+                autocomplete="off"
+              />
+              <button id="clearBtn" class="clear-btn" title="پاک کردن" style="display: none;">✕</button>
+              <button id="searchBtn">جستجو</button>
+            </div>
+            <div id="suggestions" class="suggestions"></div>
+          </div>
+          <p class="search-hint">جستجو بر اساس نام فارسی یا انگلیسی قله</p>
+        </div>
+      </section>
 
       <!-- نقشه -->
       <section class="map-section">
@@ -52,14 +117,43 @@
         </div>
       </section>
 
+      <!-- قله‌های پرطرفدار: لینک جستجو (?q=<نام>) + محتوای متنی برای موتورهای جستجو و AI -->
+      <section class="popular" aria-labelledby="popular-title">
+        <div class="container">
+          <h2 id="popular-title">بلندترین و مشهورترین قله‌های ایران</h2>
+          <p>
+            iranpeaks.ir نقشه و جستجوی قله‌های ایران است؛ مسیرهای صعود، نمودار ارتفاعی و دانلود فایل GPX برای بیش از
+            ۲۰۰۰ قله. روی هر قله بزنید تا موقعیت و مسیرهای صعودش روی نقشه باز شود و بتوانید لینکش را برای دیگران
+            بفرستید.
+          </p>
+          <ul class="popular__list">
+            <li><a href="/?q=%D8%AF%D9%85%D8%A7%D9%88%D9%86%D8%AF"><span>دماوند</span><span class="popular__h">۵۶۰۹ متر</span></a></li>
+            <li><a href="/?q=%D8%B9%D9%84%D9%85%20%DA%A9%D9%88%D9%87"><span>علم کوه</span><span class="popular__h">۴۸۵۰ متر</span></a></li>
+            <li><a href="/?q=%D8%B3%D8%A8%D9%84%D8%A7%D9%86"><span>سبلان</span><span class="popular__h">۴۸۱۱ متر</span></a></li>
+            <li><a href="/?q=%D8%AA%D8%AE%D8%AA%20%D8%B3%D9%84%DB%8C%D9%85%D8%A7%D9%86"><span>تخت سلیمان</span><span class="popular__h">۴۶۵۹ متر</span></a></li>
+            <li><a href="/?q=%D8%B3%DB%8C%D8%A7%D9%87%20%D8%B3%D9%86%DA%AF"><span>سیاه سنگ</span><span class="popular__h">۴۶۰۴ متر</span></a></li>
+            <li><a href="/?q=%D9%87%D8%B2%D8%A7%D8%B1"><span>هزار</span><span class="popular__h">۴۴۶۵ متر</span></a></li>
+            <li><a href="/?q=%D9%84%D8%B4%DA%AF%D8%B1%DA%A9"><span>لشگرک بزرگ</span><span class="popular__h">۴۲۵۶ متر</span></a></li>
+            <li><a href="/?q=%D8%B4%DB%8C%D8%B1%DA%A9%D9%88%D9%87"><span>شیرکوه</span><span class="popular__h">۴۰۷۵ متر</span></a></li>
+            <li><a href="/?q=%D8%AA%D9%88%DA%86%D8%A7%D9%84"><span>توچال</span><span class="popular__h">۳۹۶۴ متر</span></a></li>
+            <li><a href="/?q=%D8%AA%D9%81%D8%AA%D8%A7%D9%86"><span>تفتان</span><span class="popular__h">۳۹۲۱ متر</span></a></li>
+            <li><a href="/?q=%D8%A7%D9%84%D9%88%D9%86%D8%AF"><span>الوند</span><span class="popular__h">۳۵۸۴ متر</span></a></li>
+            <li><a href="/?q=%D8%A8%DB%8C%D9%86%D8%A7%D9%84%D9%88%D8%AF"><span>بینالود</span><span class="popular__h">۳۲۰۸ متر</span></a></li>
+          </ul>
+        </div>
+      </section>
+
+      </main>
+
       <!-- فوتر ساده -->
-        <footer class="footer">
-            <div class="container">
-                <strong>سلب مسئولیت:</strong>                اطلاعات مسیرها و گزارش‌های هواشناسی این سایت صرفاً جنبه اطلاع‌رسانی دارد و مسئولیت هرگونه تصمیم‌گیری، صعود و پیامدهای آن منحصراً بر عهده خود کاربر است.
-                <br />
-                <span id="current-year"></span>© - همه حقوق محفوظ است
-            </div>
-        </footer>
+      <footer class="footer">
+        <div class="container">
+          <strong>سلب مسئولیت:</strong> اطلاعات مسیرها و گزارش‌های هواشناسی این سایت صرفاً جنبه اطلاع‌رسانی دارد و
+          مسئولیت هرگونه تصمیم‌گیری، صعود و پیامدهای آن منحصراً بر عهده خود کاربر است.
+          <br />
+          <span id="current-year"></span>© - همه حقوق محفوظ است
+        </div>
+      </footer>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
