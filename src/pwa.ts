@@ -1,4 +1,13 @@
 // src/pwa.ts
+
+/** زمان انتشار نسخهٔ در حال اجرا؛ buildId همان Date.now() به‌صورت base36 با پیشوند «v» است */
+export function releaseDate(): Date | null {
+  if (typeof __BUILD_ID__ !== 'string' || !__BUILD_ID__) return null;
+  const ms = parseInt(__BUILD_ID__.slice(1), 36);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+
 export function watchForUpdates(): void {
   if (typeof __BUILD_ID__ !== 'string' || !__BUILD_ID__) return;
 
