@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run peaks && tsc && vite build",
+    "build": "npm run peaks && tsc && vite build && npm run pages",
     "preview": "vite preview",
     "peaks": "node scripts/build-peaks.mjs",
+    "pages": "node scripts/build-pages.mjs",
     "tracks": "npm run peaks && node scripts/build-tracks.mjs"
   },
   "devDependencies": {

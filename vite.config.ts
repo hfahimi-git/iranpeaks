@@ -69,6 +69,10 @@ export default defineConfig({
         ]
       },
       workbox: {
+        // صفحه‌های استاتیک هر قله (/p/<slug>/) نباید با navigateFallback به شل اپ
+        // (index.html) تبدیل شوند؛ وگرنه مرورگرها/تلگرام همان عنوان عمومی را می‌بینند.
+        // این آدرس‌ها مستقیم از شبکه (GitHub Pages) خوانده می‌شوند.
+        navigateFallbackDenylist: [/\/p\//],
         // کش کردن فایل‌های استاتیک + دیتای قله‌ها (peaks.json، جایگزین دیتابیس قبلی)
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,webmanifest}', 'data/peaks.json'],
         runtimeCaching: [

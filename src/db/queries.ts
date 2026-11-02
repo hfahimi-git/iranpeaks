@@ -1,6 +1,7 @@
 // src/db/queries.ts
 // جستجوی قله‌ها روی یک JSON سبک (public/data/peaks.json)؛ بدون SQLite، بدون wasm.
 // فایل JSON را scripts/build-peaks.mjs از data/peaks.db می‌سازد و ترتیب ستون‌ها همان‌جای ثبت شده است.
+import { peakSlug } from '../util';
 
 /** ستون‌های peaks.json — ترتیب باید با scripts/build-peaks.mjs یکی باشد */
 const COLUMNS = ['oid', 'name', 'ename', 'height', 'lat', 'lng', 'states', 'locations', 'folders'] as const;
@@ -69,6 +70,35 @@ function allPeaks(): Promise<IndexedPeak[]> {
 /** مرتب‌سازی مثل SQL قبلی: ORDER BY height DESC (ارتفاع خالی انتها) */
 const byHeightDesc = (a: Peak, b: Peak): number => (b.height ?? -Infinity) - (a.height ?? -Infinity);
 
+/**
+ * قلهٔ متناظر با slug یک صفحهٔ `/p/<slug>/`.
+ *
+ * صفحه‌های استاتیک در بیلد ساخته می‌شوند؛ ولی روی سرور توسعه (vite dev) یا اگر
+ * صفحه‌ای وجود نداشته باشد، اپ خودش باید از روی آدرس، قله را پیدا کند.
+ * الگوریتم ساخت slug و پسوند تکرار (-2، -3) باید عیناً مثل scripts/build-pages.mjs
+ * باشد، وگرنه آدرس به قلهٔ دیگری می‌رسد.
+ */
+export async function findPeakBySlug(slug: string): Promise<Peak | null> {
+  if (!slug) return null;
+  const used = new Set<string>();
+
+  for (const row of await allPeaks()) {
+    const name = (row.peak.name || row.peak.ename || '').trim();
+    if (!name) continue;
+
+    let s = peakSlug(name);
+    if (used.has(s)) {
+      let i = 2;
+      while (used.has(`${s}-${i}`)) i++;
+      s = `${s}-${i}`;
+    }
+    used.add(s);
+
+    if (s === slug) return row.peak;
+  }
+  return null;
+}
+
 export async function searchPeaks(query: string): Promise<Peak[]> {
   const q = norm(query);
   if (!q) return [];
@@ -81,8 +111,7 @@ export async function searchPeaks(query: string): Promise<Peak[]> {
   return matches.sort(byHeightDesc);
 }
 
-export async function getPeaksByState(state: string): Promise<Peak[]> {
-  const q = norm(state);
+export async function getPeaksByState(state: string): Promise<Peak[]> {  const q = norm(state);
   if (!q) return [];
   const matches: Peak[] = [];
   for (const row of await allPeaks()) {

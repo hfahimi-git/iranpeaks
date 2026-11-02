@@ -80,6 +80,13 @@ body {
   font-weight: 400;
 }
 
+/* صفحهٔ استاتیک هر قله: نام قله جای tagline می‌نشیند (H1 برای سئو) */
+.tagline--peak {
+  font-size: 1.05rem;
+  opacity: 1;
+  font-weight: 600;
+}
+
 /* Search Box */
 .search-section {
   padding: 2.5rem 0 1.5rem;

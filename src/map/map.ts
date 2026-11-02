@@ -42,7 +42,26 @@ export function initMap(containerId: string = 'map'): L.Map {
   return map;
 }
 
-export async function loadPeaks(query: string) {
+/** قله‌ای که صفحهٔ استاتیکش باز شده؛ نام تنها کافی نیست چون ممکن است هم‌نام باشد */
+export interface PeakAnchor {
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+/** نرمال‌سازی سبک عنوان مسیر برای مقایسه (همان منطق tracks.ts) */
+const normTrackTitle = (s: string): string =>
+  s
+    .normalize('NFKC')
+    .replace(/[يى]/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u200e]/g, ' ')
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+export async function loadPeaks(query: string, anchor?: PeakAnchor) {
   if (!map || !markersLayer) return;
 
   clearMarkers();
@@ -54,44 +73,67 @@ export async function loadPeaks(query: string) {
 
   const peaks = await searchPeaks(query.trim());
   const markers = renderPeaksOnMap(peaks);
+  const trackTitle = new URLSearchParams(window.location.search).get('track')?.trim() || null;
+
+  // صفحهٔ استاتیک یک قله (/p/<slug>/): همان قله را با مختصاتش پیدا کن و پاپ‌آپش را باز کن
+  // تا کاربر مستقیم روی همان قله فرود بیاید (باکس مسیرها هم داخل پاپ‌آپ لود می‌شود).
+  // اگر لینک مسیر دارد ولی این قله آن مسیر را ندارد (نام تکراری، مثلاً دو «توچال»)،
+  // پایین‌تر قلهٔ درست از روی فایل متادیتا پیدا می‌شود.
+  const anchorIndex = anchor
+    ? peaks.findIndex(
+        (p) =>
+          Math.abs((p.lat ?? Infinity) - anchor.lat) < 1e-6 &&
+          Math.abs((p.lng ?? Infinity) - anchor.lng) < 1e-6,
+      )
+    : -1;
+
+  const anchorHasTrack = async (): Promise<boolean> => {
+    if (!trackTitle || anchorIndex < 0) return false;
+    try {
+      const meta = await loadPeakMeta(peaks[anchorIndex].oid);
+      if (!meta) return false;
+      const wanted = normTrackTitle(trackTitle);
+      return meta.some(([, m]) => {
+        const n = normTrackTitle(String(m.n || ''));
+        return n === wanted || n.includes(wanted) || wanted.includes(n);
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  if (anchorIndex >= 0 && (!trackTitle || (await anchorHasTrack()))) {
+    markers[anchorIndex]?.openPopup();
+    return;
+  }
 
   // اگر لینک track داره و نتیجه بیشتر از یک قله است، باید قله‌ای که این مسیر توش هست رو پیدا و باز کنیم
-  const trackTitle = new URLSearchParams(window.location.search).get('track')?.trim() || null;
   if (trackTitle && peaks.length > 1) {
-    const wanted = trackTitle
-      .normalize('NFKC')
-      .replace(/[يى]/g, 'ی')
-      .replace(/ك/g, 'ک')
-      .replace(/[\u200c\u200f\u200e]/g, ' ')
-      .replace(/[\u064B-\u065F\u0670]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
+    const wanted = normTrackTitle(trackTitle);
+    let found = false;
 
     // متای هر قله رو چک می‌کنیم تا ببینیم کدومش این track رو داره
     for (let i = 0; i < peaks.length; i++) {
       try {
         const meta = await loadPeakMeta(peaks[i].oid);
         if (!meta) continue;
-        const found = meta.some(([, m]) => {
-          const n = String(m.n || '')
-            .normalize('NFKC')
-            .replace(/[يى]/g, 'ی')
-            .replace(/ك/g, 'ک')
-            .replace(/[\u200c\u200f\u200e]/g, ' ')
-            .replace(/[\u064B-\u065F\u0670]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
+        const match = meta.some(([, m]) => {
+          const n = normTrackTitle(String(m.n || ''));
           return n === wanted || n.includes(wanted) || wanted.includes(n);
         });
-        if (found) {
+        if (match) {
           setPendingTrack(trackTitle);
           markers[i].openPopup();
+          found = true;
           break;
         }
-      } catch {}
+      } catch {
+        // قلهٔ بعدی
+      }
     }
+
+    // مسیر پیدا نشد: اگر صفحهٔ استاتیک قله است، همان قله را باز کن
+    if (!found && anchorIndex >= 0) markers[anchorIndex]?.openPopup();
     return;
   }
 
@@ -127,18 +169,18 @@ function buildPopup(peak: Peak, lat: number, lng: number): HTMLElement {
           ${peak.states ? `<div>استان: <b>${esc(peak.states)}</b></div>` : ''}
           ${peak.locations ? `<div>موقعیت: <b>${esc(peak.locations)}</b></div>` : ''}
           ${peak.folders ? `<div>مجموعه: <b>${esc(peak.folders)}</b></div>` : ''}
-          <div>گزارش هواشناسی: <b><a href="https://www.meteoblue.com/en/weather/week/${lat}N${lng}E" target="_blank"
-            style="color:#2563eb;">7 روز آینده</a></b>
-          </div>
         </div>
         <div class="peak-tracks-slot"></div>
-        <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; direction:ltr;">
+        <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; direction:ltr; align-items:center;">
+          <a href="https://www.meteoblue.com/en/weather/week/${lat}N${lng}E" target="_blank" rel="noopener noreferrer"
+            title="گزارش هواشناسی ۷ روزه (meteoblue)" aria-label="گزارش هواشناسی ۷ روزه (meteoblue)"
+            style="color:#2563eb;"><img src="${import.meta.env.BASE_URL}meteoblue.png" width="16" height="16" alt="meteoblue"></a>
           <a href="https://www.wikiloc.com/wikiloc/map.do?sw=${lat - 0.1},${lng - 0.1}&ne=${lat + 0.1},${lng + 0.1}"
-            target="_blank" style="color:#2563eb;"><img src="wikiloc.ico" width="16"></a>
-          <a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank"
-          style="color:#2563eb;"><img src="maps.ico" width="16"></a>
-          <a href="https://earth.google.com/web/@${lat},${lng},2000a" target="_blank"
-          style="color:#2563eb;"><img src="earth.ico" width="16"></a>
+            target="_blank" rel="noopener noreferrer" title="مسیرها در ویکی‌لوک" aria-label="مسیرها در ویکی‌لوک" style="color:#2563eb;"><img src="${import.meta.env.BASE_URL}wikiloc.ico" width="16" alt="wikiloc"></a>
+          <a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener noreferrer"
+          title="نقشه گوگل" aria-label="نقشه گوگل" style="color:#2563eb;"><img src="${import.meta.env.BASE_URL}maps.ico" width="16" alt="Google Maps"></a>
+          <a href="https://earth.google.com/web/@${lat},${lng},2000a" target="_blank" rel="noopener noreferrer"
+          title="گوگل ارث" aria-label="گوگل ارث" style="color:#2563eb;"><img src="${import.meta.env.BASE_URL}earth.ico" width="16" alt="Google Earth"></a>
           <button type="button" class="popup-share" title="کپی لینک این قله" aria-label="کپی لینک این قله">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           </button>

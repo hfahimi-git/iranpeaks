@@ -18,24 +18,51 @@ export const esc = (value: unknown): string =>
 /**
  * یک پارامتر URL را بدون رفرش صفحه و بدون شلوغ‌کردن تاریخچه به‌روز می‌کند.
  * مقدار null یعنی پارامتر حذف شود. با این کار هر جستجو/قلهٔ باز، لینک قابل اشتراک دارد.
+ * اگر کاربر روی صفحهٔ استاتیک یک قله (/p/<slug>/) باشد، جستجوی تازه به صفحهٔ اصلی برمی‌گردد.
  */
 export function setUrlParam(key: string, value: string | null): void {
   const url = new URL(window.location.href);
+  const base = import.meta.env.BASE_URL || '/';
+  if (url.pathname !== base) {
+    url.pathname = base;
+    url.hash = '';
+  }
   if (value) url.searchParams.set(key, value);
   else url.searchParams.delete(key);
   window.history.replaceState(null, '', url.pathname + url.search + url.hash);
 }
 
+/** کاراکترهایی که در نام فایل/مسیر مجاز نیستند (و کاراکترهای معنادار در URL) */
+const UNSAFE_PATH = /[\u0000-\u001f\u007f\\/:*?"<>|#%]/g;
+
+/**
+ * slug یک قله از «نام» آن؛ باید عیناً با peakSlug در scripts/build-pages.mjs یکی باشد،
+ * وگرنه دکمهٔ «کپی لینک» آدرسی می‌سازد که صفحه‌اش وجود ندارد.
+ */
+export function peakSlug(name: string): string {
+  return (
+    String(name ?? '')
+      .normalize('NFKC')
+      .replace(/\u200c/g, ' ')
+      .replace(UNSAFE_PATH, ' ')
+      .replace(/\s+/g, '-')
+      .replace(/^[-.]+|[-.]+$/g, '')
+      .slice(0, 80) || 'peak'
+  );
+}
+
 /**
  * لینک قابل اشتراک برای یک قله (و به‌اختیار یک مسیر). پارامترها «نام» هستند نه
  * شناسهٔ دیتابیس تا کسی نتواند با شمردن idها همهٔ صفحه‌ها را جمع کند.
+ *
+ * اگر قله صفحهٔ استاتیک داشته باشد، لینک به همان صفحه می‌رود؛ این‌طور پیش‌نمایش
+ * تلگرام/واتساپ عنوان و توضیح درست را نشان می‌دهد (خزنده‌ها جاوااسکریپت اجرا نمی‌کنند).
  */
 export function shareUrl(peakTitle?: string, trackTitle?: string): string {
-  const { origin, pathname } = window.location;
-  const base = `${origin}${pathname}`;
-  if (!peakTitle) return base;
-  const url = new URL(base);
-  url.searchParams.set('q', peakTitle);
+  const { origin } = window.location;
+  const base = import.meta.env.BASE_URL || '/';
+  if (!peakTitle) return `${origin}${base}`;
+  const url = new URL(`${origin}${base}p/${encodeURIComponent(peakSlug(peakTitle))}/`);
   if (trackTitle) url.searchParams.set('track', trackTitle);
   return url.href;
 }

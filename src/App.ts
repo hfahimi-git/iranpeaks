@@ -1,4 +1,4 @@
-import { searchPeaks, searchStates, type Peak } from './db/queries';
+import { searchPeaks, searchStates, findPeakBySlug, type Peak } from './db/queries';
 import { esc, setUrlParam } from './util';
 
 // ======================
@@ -254,18 +254,28 @@ if (yearEl) {
 // (شناسهٔ دیتابیس در URL نمی‌آید تا کسی نتواند با شمردن idها همهٔ قله‌ها را جمع کند)
 // ======================
 const initialParams = new URLSearchParams(window.location.search);
-const initialQuery = (initialParams.get('q') ?? '').trim();
+// صفحه‌های استاتیک هر قله (/p/<slug>/) نام و مختصات قله را در body می‌گذارند.
+// نام تنها کافی نیست (چند قله هم‌نام داریم)، پس قلهٔ درست با مختصاتش پیدا می‌شود.
+const pagePeak = (document.body.dataset.peak ?? '').trim();
+const pageLat = Number(document.body.dataset.lat);
+const pageLng = Number(document.body.dataset.lng);
+const pageAnchor =
+  pagePeak && Number.isFinite(pageLat) && Number.isFinite(pageLng)
+    ? { name: pagePeak, lat: pageLat, lng: pageLng }
+    : undefined;
+const initialQuery = (initialParams.get('q') ?? pagePeak).trim();
 const initialTrack = (initialParams.get('track') ?? '').trim();
 
 // آپدیت متا برای پیش‌نمایش لینک در تلگرام/واتساپ/...
-function updateShareMeta() {
-  if (!initialQuery) return;
-  const title = initialTrack
-    ? `مسیر «${initialTrack}» در قله «${initialQuery}» | iranpeaks.ir`
-    : `قله «${initialQuery}» | نقشه قلل ایران — iranpeaks.ir`;
-  const desc = initialTrack
-    ? `مسیر صعود «${initialTrack}» به قله «${initialQuery}» با نقشه، پروفایل ارتفاعی و دانلود GPX در iranpeaks.ir`
-    : `قله «${initialQuery}» روی نقشه قلل ایران — موقعیت، مسیرهای صعود، نمودار ارتفاعی و دانلود GPX`;
+// روی صفحه‌های استاتیک این کار لازم نیست: متای درست همان‌جا در HTML ساخته شده.
+function updateShareMeta(peak: string, track: string, force = false) {
+  if (!peak || (pagePeak && !force)) return;
+  const title = track
+    ? `مسیر «${track}» در قله «${peak}» | iranpeaks.ir`
+    : `قله «${peak}» | نقشه قلل ایران — iranpeaks.ir`;
+  const desc = track
+    ? `مسیر صعود «${track}» به قله «${peak}» با نقشه، پروفایل ارتفاعی و دانلود GPX در iranpeaks.ir`
+    : `قله «${peak}» روی نقشه قلل ایران — موقعیت، مسیرهای صعود، نمودار ارتفاعی و دانلود GPX`;
   document.title = title;
   const set = (sel: string, attr: string, val: string) => {
     const el = document.querySelector(sel);
@@ -278,14 +288,48 @@ function updateShareMeta() {
   set('meta[name="twitter:title"]', 'content', title);
   set('meta[name="twitter:description"]', 'content', desc);
 }
-updateShareMeta();
+updateShareMeta(initialQuery, initialTrack);
 
-if (initialQuery) {
-  searchInput.value = initialQuery;
-  updateClearButton();
-  void (async () => {
-    const map = await ensureMap();
-    if (initialTrack) map.queueTrackFromUrl(initialTrack);
-    await map.loadPeaks(initialQuery);
-  })();
+// آدرس صفحهٔ استاتیک قله: /p/<slug>/  (اگر صفحه از پیش ساخته شده باشد، data-peak بالاتر کافی است)
+const basePath = import.meta.env.BASE_URL || '/';
+const pagePathPrefix = `${basePath}p/`;
+let pathSlug = '';
+if (window.location.pathname.startsWith(pagePathPrefix)) {
+  try {
+    pathSlug = decodeURIComponent(window.location.pathname.slice(pagePathPrefix.length).replace(/\/+$/, ''));
+  } catch {
+    pathSlug = '';
+  }
 }
+
+// راه‌اندازی اولیه؛ اگر صفحهٔ استاتیک وجود نداشته باشد (مثلاً روی سرور توسعه)
+// قله از روی slug همان آدرس پیدا می‌شود تا لینک‌ها همیشه کار کنند.
+async function bootInitial(): Promise<void> {
+  let peakName = pagePeak;
+  let anchor = pageAnchor;
+
+  if (!peakName && pathSlug) {
+    const peak = await findPeakBySlug(pathSlug);
+    if (peak) {
+      peakName = (peak.name || peak.ename || '').trim();
+      if (Number.isFinite(peak.lat) && Number.isFinite(peak.lng)) {
+        anchor = { name: peakName, lat: peak.lat as number, lng: peak.lng as number };
+      }
+    }
+  }
+
+  const query = (initialParams.get('q') ?? peakName).trim();
+  if (!query) return;
+
+  // روی سرور توسعه (یا اگر صفحهٔ استاتیک نبود) عنوان/متا را هم از روی نام قله بگذار
+  if (!pagePeak && peakName) updateShareMeta(peakName, initialTrack, true);
+
+  searchInput.value = query;
+  updateClearButton();
+
+  const map = await ensureMap();
+  if (initialTrack) map.queueTrackFromUrl(initialTrack);
+  await map.loadPeaks(query, anchor);
+}
+
+void bootInitial();
