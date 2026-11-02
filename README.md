@@ -23,11 +23,13 @@ public/data/peaks.json ← دادهٔ سبک جستجو در مرورگر (بد�
    ▼
 public/tracks/<id>.json       ← مسیر ساده‌شدهٔ هر GPX (فقط ترک‌های متصل‌شده)
 public/tracks/meta/<oid>.json ← متادیتای مسیرهای هر قله (لیزی، موقع باز شدن پاپ‌آپ)
+public/tracks/analysis/<id>.json ← آمار مسیر + برنامهٔ مربی‌گری (برای هر GPX یکتا)
 reports/                      ← new-peaks.csv (قله‌های ناشناخته) و tracks-review.csv (موارد مشکوک)
 ```
 
 - <span dir="rtl"> فایل‌های GPX معمولاً در `gpx/` هستند (در .gitignore) و با `npm run tracks` پردازش می‌شوند.</span>
 - <span dir="rtl">اصلاح دستیِ تطبیق‌ها: `scripts/track-overrides.json`.</span>
+- <span dir="rtl">تحلیل GPXها و تولید فایل آمار + توصیه‌های مربی: `npm run analysis` (یا `npm run analysis -- مسیر/پوشه`). خروجی در `public/tracks/analysis/`.</span>
 
 ## لینک‌های قابل اشتراک
 
