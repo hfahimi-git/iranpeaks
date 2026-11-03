@@ -52,12 +52,6 @@ interface TrailStats {
   parsedAt: string;
 }
 
-interface TrailScheduleRow {
-  phase: string;
-  time: string;
-  notes: string;
-}
-
 interface TrailCoach {
   bestSeason: string;
   estimatedTimeHours: number;
@@ -65,7 +59,6 @@ interface TrailCoach {
   climbEffortM: number;
   gear: string[];
   readiness: string;
-  schedule: TrailScheduleRow[];
   nutrition: string[];
   safetyTips: string[];
 }
@@ -497,24 +490,6 @@ function renderAnalysis(analysis: TrailAnalysis): HTMLElement {
     const gear = analysisSection('تجهیزات پایه');
     gear.append(analysisList(coach.gear));
     body.append(gear);
-  }
-
-  if (coach.schedule.length) {
-    const schedule = analysisSection('برنامه پیشنهادی صعود');
-    const table = el('table', 'track-analysis__table');
-    const thead = el('thead', '');
-    const headRow = el('tr', '');
-    for (const title of ['مرحله', 'زمان', 'نکته']) headRow.append(el('th', '', title));
-    thead.append(headRow);
-    const tbody = el('tbody', '');
-    for (const row of coach.schedule) {
-      const tr = el('tr', '');
-      tr.append(el('td', '', row.phase), el('td', '', row.time), el('td', '', row.notes));
-      tbody.append(tr);
-    }
-    table.append(thead, tbody);
-    schedule.append(table);
-    body.append(schedule);
   }
 
   if (coach.nutrition.length) {
