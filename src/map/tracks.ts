@@ -28,6 +28,53 @@ interface TrackFile {
 /** متادیتای مسیرهای یک قله: [[شناسه، متادیتا]، …] (public/tracks/meta/<oid>.json) */
 type PeakTracksMeta = Array<[string, TrackMeta]>;
 
+// ───────────────────────── تحلیل تولیدشده از GPX ─────────────────────────
+// خروجی scripts/build-analysis.mjs (public/tracks/analysis/<id>.json)
+type TrailDifficulty = 'آسان' | 'متوسط' | 'سخت' | 'خیلی سخت';
+
+interface TrailStats {
+  id: string;
+  name: string;
+  distanceKm: number;
+  elevGain: number;
+  elevLoss: number;
+  maxElev: number;
+  minElev: number;
+  hasElevation: boolean;
+  durationHours: number | null;
+  startLat: number | null;
+  startLon: number | null;
+  endLat: number | null;
+  endLon: number | null;
+  pointCount: number;
+  difficulty: TrailDifficulty;
+  sourceFile: string;
+  parsedAt: string;
+}
+
+interface TrailScheduleRow {
+  phase: string;
+  time: string;
+  notes: string;
+}
+
+interface TrailCoach {
+  bestSeason: string;
+  estimatedTimeHours: number;
+  recordedReverse: boolean;
+  climbEffortM: number;
+  gear: string[];
+  readiness: string;
+  schedule: TrailScheduleRow[];
+  nutrition: string[];
+  safetyTips: string[];
+}
+
+interface TrailAnalysis {
+  stats: TrailStats;
+  coach: TrailCoach;
+}
+
 /** تکه‌های مسیر؛ فایل‌های قدیمی فقط p دارند */
 const segmentsOf = (data: TrackFile): TrackPoint[][] => data.s ?? (data.p ? [data.p] : []);
 
@@ -43,6 +90,7 @@ let expandedId: string | null = null;
 
 const metaCache = new Map<string, PeakTracksMeta | null>(); // متادیتای per-قله (null = قله مسیری ندارد)
 const dataCache = new Map<string, TrackFile>();    // داده‌ی خام مسیرها
+const analysisCache = new Map<string, TrailAnalysis | null>(); // تحلیل ماشینی per-مسیر (null = ندارد)
 const shapes = new Map<string, L.FeatureGroup>();  // کش لایه‌های Leaflet
 const visible = new Set<string>();                 // مسیرهای نمایش‌داده‌شده
 const metas = new Map<string, TrackMeta>();        // متادیتای مسیرهای نمایش‌داده‌شده
@@ -146,6 +194,22 @@ async function getData(id: string): Promise<TrackFile> {
   if (!res.ok) throw new Error(`track ${id}: HTTP ${res.status}`);
   const data = (await res.json()) as TrackFile;
   dataCache.set(id, data);
+  return data;
+}
+
+/** تحلیل ماشینی مسیر (خروجی scripts/build-analysis.mjs)؛ فقط یک‌بار دانلود می‌شود */
+async function getAnalysis(id: string): Promise<TrailAnalysis | null> {
+  const cached = analysisCache.get(id);
+  if (cached !== undefined) return cached;
+
+  let data: TrailAnalysis | null = null;
+  try {
+    const res = await fetch(`${BASE}tracks/analysis/${id}.json`);
+    if (res.ok) data = (await res.json()) as TrailAnalysis;
+  } catch {
+    // آفلاین یا فایل ناموجود → بخش تحلیل نمایش داده نمی‌شود
+  }
+  analysisCache.set(id, data);
   return data;
 }
 
@@ -349,6 +413,148 @@ function stat(label: string, value: string): HTMLElement {
   return box;
 }
 
+// ───────────────────────── نمایش تحلیل ماشینی ─────────────────────────
+const DIFF_CLASS: Record<TrailDifficulty, string> = {
+  'آسان': 'is-easy',
+  'متوسط': 'is-medium',
+  'سخت': 'is-hard',
+  'خیلی سخت': 'is-xhard',
+};
+
+function fmtHours(hours: number): string {
+  const rounded = Math.round(hours * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} ساعت`;
+}
+
+function analysisChip(label: string, value: string, className = ''): HTMLElement {
+  const chip = el('span', `track-analysis__chip${className ? ` ${className}` : ''}`);
+  chip.append(el('span', 'track-analysis__chip-label', label), el('b', '', value));
+  return chip;
+}
+
+function analysisSection(title: string): HTMLElement {
+  const section = el('div', 'track-analysis__section');
+  section.append(el('h4', '', title));
+  return section;
+}
+
+function analysisList(items: string[]): HTMLUListElement {
+  const list = el('ul', 'track-analysis__list');
+  for (const item of items) list.append(el('li', '', item));
+  return list;
+}
+
+/** بخش تاشوی «تحلیل مسیر و توصیه مربی» با تأکید بر اینکه خروجی ماشینی و غیرقطعی است */
+function renderAnalysis(analysis: TrailAnalysis): HTMLElement {
+  const { stats, coach } = analysis;
+  const details = el('details', 'track-analysis');
+
+  const summary = el('summary', 'track-analysis__summary');
+  summary.append(
+    el('span', 'track-analysis__title', 'تحلیل مسیر و توصیه مربی'),
+    el('span', 'track-analysis__badge', 'تولید ماشینی'),
+  );
+  details.append(summary);
+
+  const body = el('div', 'track-analysis__body');
+  body.append(
+    el(
+      'p',
+      'track-analysis__disclaimer',
+      'این اطلاعات به‌صورت خودکار از فایل GPX تولید شده و قطعی نیست؛ ممکن است ناقص یا نادقیق باشد. تصمیم نهایی را بر اساس شرایط آب‌وهوا، وضعیت مسیر و تجربه‌ی خود بگیرید.',
+    ),
+  );
+
+  const chips = el('div', 'track-analysis__chips');
+  chips.append(analysisChip('سختی', stats.difficulty, DIFF_CLASS[stats.difficulty] ?? ''));
+  chips.append(
+    analysisChip(stats.durationHours != null ? 'زمان ثبت‌شده' : 'زمان پیشنهادی', fmtHours(coach.estimatedTimeHours)),
+  );
+  body.append(chips);
+
+  if (coach.recordedReverse) {
+    body.append(
+      el(
+        'p',
+        'track-analysis__note',
+        `این GPX در جهت نزول ثبت شده است؛ صعود معادل حدود ${coach.climbEffortM} متر است.`,
+      ),
+    );
+  }
+  if (!stats.hasElevation) {
+    body.append(el('p', 'track-analysis__note', 'ارتفاع در فایل GPX ثبت نشده؛ بخشی از اعداد تقریبی است.'));
+  }
+
+  const season = analysisSection('بهترین فصل و زمان');
+  season.append(el('p', '', coach.bestSeason));
+  body.append(season);
+
+  const readiness = analysisSection('سطح آمادگی مورد نیاز');
+  readiness.append(el('p', '', coach.readiness));
+  body.append(readiness);
+
+  if (coach.gear.length) {
+    const gear = analysisSection('تجهیزات پایه');
+    gear.append(analysisList(coach.gear));
+    body.append(gear);
+  }
+
+  if (coach.schedule.length) {
+    const schedule = analysisSection('برنامه پیشنهادی صعود');
+    const table = el('table', 'track-analysis__table');
+    const thead = el('thead', '');
+    const headRow = el('tr', '');
+    for (const title of ['مرحله', 'زمان', 'نکته']) headRow.append(el('th', '', title));
+    thead.append(headRow);
+    const tbody = el('tbody', '');
+    for (const row of coach.schedule) {
+      const tr = el('tr', '');
+      tr.append(el('td', '', row.phase), el('td', '', row.time), el('td', '', row.notes));
+      tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    schedule.append(table);
+    body.append(schedule);
+  }
+
+  if (coach.nutrition.length) {
+    const nutrition = analysisSection('تغذیه پیشنهادی');
+    nutrition.append(analysisList(coach.nutrition));
+    body.append(nutrition);
+  }
+
+  if (coach.safetyTips.length) {
+    const safety = analysisSection('نکات ایمنی');
+    safety.append(analysisList(coach.safetyTips));
+    body.append(safety);
+  }
+
+  details.append(body);
+  return details;
+}
+
+/** تحلیل را لیزی داخل کارت مسیر می‌گذارد؛ اگر کارت بسته شده باشد چیزی را دست‌کاری نمی‌کند */
+async function loadAnalysisInto(slot: HTMLElement, id: string): Promise<void> {
+  slot.classList.add('track-analysis-slot--loading');
+  slot.textContent = 'در حال بارگذاری تحلیل…';
+
+  const analysis = await getAnalysis(id);
+  if (!slot.isConnected) return;
+
+  slot.classList.remove('track-analysis-slot--loading');
+  slot.replaceChildren();
+  if (!analysis) {
+    slot.remove();
+    return;
+  }
+  try {
+    slot.append(renderAnalysis(analysis));
+  } catch {
+    analysisCache.set(id, null);
+    slot.remove();
+  }
+}
+
 function cardBody(id: string, meta: TrackMeta): HTMLElement {
   const body = el('div', 'track-card__body');
 
@@ -383,6 +589,9 @@ function cardBody(id: string, meta: TrackMeta): HTMLElement {
   if (meta.by) info.push(`نویسنده: ${meta.by}`);
   for (const line of info) body.append(el('div', 'track-card__meta', line));
 
+  const analysisSlot = el('div', 'track-analysis-slot');
+  body.append(analysisSlot);
+  void loadAnalysisInto(analysisSlot, id);
 
   return body;
 }

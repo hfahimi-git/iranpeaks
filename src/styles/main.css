@@ -482,6 +482,8 @@ body {
   max-height: 60%;
   overflow-y: auto;
   direction: rtl;
+  /* داخل .leaflet-container هستیم و Leaflet فونت خودش را تحمیل می‌کند؛ فونت سایت را بازمی‌گردانیم */
+  font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif;
 }
 
 .track-legend[hidden] {
@@ -645,4 +647,174 @@ body {
 
 .track-act--primary:hover {
   background: #1d4ed8;
+}
+
+/* ───────── تحلیل ماشینی مسیر (داخل کارت مسیر) ───────── */
+.track-analysis-slot {
+  font-size: 0.74rem;
+}
+
+.track-analysis-slot--loading {
+  padding: 2px 0;
+  color: #64748b;
+}
+
+.track-analysis {
+  background: #f8fbff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+}
+
+.track-analysis__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.track-analysis__summary::-webkit-details-marker {
+  display: none;
+}
+
+.track-analysis__summary::after {
+  content: '▾';
+  margin-inline-start: auto;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.track-analysis[open] .track-analysis__summary::after {
+  content: '▴';
+}
+
+.track-analysis__title {
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.track-analysis__badge {
+  padding: 1px 6px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #92400e;
+  white-space: nowrap;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 999px;
+}
+
+.track-analysis__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 8px 8px;
+}
+
+.track-analysis__disclaimer {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 0.68rem;
+  line-height: 1.55;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+}
+
+.track-analysis__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.track-analysis__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 0.7rem;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+}
+
+.track-analysis__chip-label {
+  color: #64748b;
+}
+
+.track-analysis__chip.is-easy b {
+  color: #15803d;
+}
+
+.track-analysis__chip.is-medium b {
+  color: #b45309;
+}
+
+.track-analysis__chip.is-hard b {
+  color: #c2410c;
+}
+
+.track-analysis__chip.is-xhard b {
+  color: #b91c1c;
+}
+
+.track-analysis__note {
+  margin: 0;
+  padding: 5px 7px;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: #475569;
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+
+.track-analysis__section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.track-analysis__section h4 {
+  margin: 0;
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.track-analysis__section p {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: #334155;
+}
+
+.track-analysis__list {
+  margin: 0;
+  padding-inline-start: 16px;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: #334155;
+}
+
+.track-analysis__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.track-analysis__table th,
+.track-analysis__table td {
+  padding: 3px 4px;
+  vertical-align: top;
+  text-align: right;
+  border: 1px solid #e2e8f0;
+}
+
+.track-analysis__table th {
+  font-weight: 700;
+  color: #1e3a8a;
+  background: #eff6ff;
 }
